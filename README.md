@@ -2,8 +2,7 @@
 A Powershell-based imageboard search/download tool.
 
 # Documentation
- - The program is currently undergoing a very large rework, so this readme will be left incomplete for now.
- - hentapi has most of its documentation built in. To view it, run the command `Get-Help .\hentapi.ps1` in the same directory as the program itself.
+ - The program is currently undergoing a very large rework, so this readme is incomplete at the moment. However, hentapi has most of its documentation built in. To view it, run the command `Get-Help .\hentapi.ps1` in the same directory as the program itself.
 
 # Other Info
  - If you have any issues with the program or suggestions for its improvement, please open an issue and let me know.
