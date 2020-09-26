@@ -30,7 +30,7 @@
     If this parameter is specified, only the amount of posts matching the command will be output.
     This parameter overrides ALL other options.
 
-.PARAMETER ConfigFile
+.PARAMETER ServerConfig
     Here you can give a path to a custom configuration file. I don't think this one works, but I don't care.
     Every time the program is run, it checks for a config file, and generates one if it doesn't exist.
     Let's say (for the sake of argument), that you got a really full config file from somewhere else.
@@ -38,6 +38,9 @@
 
     Move that file to the same directory as this script, and boom. It'll be loaded the next time hentapi runs.
     Easy. Simple. Why did I add this option? Nobody's going to have that much trouble with this.
+
+.PARAMETER UserConfig
+    TBA
 
 .PARAMETER Download
     This one's actually 2 parameters, but don't worry too much about that. If you want to download the results of
@@ -81,7 +84,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2020-09-24
+    Last Edit: 2020-09-26
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -104,8 +107,8 @@
     Version 2.4 - Finally polished the progress bars and this help file. Happy new year!
     Version 2.5 - Added json support, but the page/post count is a bit wonky now. I might be able to fix it but I really don't care right now. This was a giant ordeal and I had to rework most of the program to get this working. Have fun.
     Version 2.6 - Polished code for first Github release, and laid the foundations for a large rework of the configuration system.
+    Version 2.7 - Massively reworked the config file system, which will make it much easier and smoother to add new servers and server types. I also added the -Limit option, which can be used to limit the amount of posts you get from a query.
 #>
-#TODO: REWORK CONFIG SYSTEM TO USE 3 FILES; ONE BEING HENTAPI.PS1, TWO IS A LIST OF SERVERS THAT THE USER HAS, AND THREE IS A FILE CONTAINING INSTRUCTIONS FOR HENTAPI ON HOW TO DEAL WITH EACH SERVER.
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
     [parameter(Mandatory=$true,ParameterSetName="TagSearch",ValueFromPipeline=$true,HelpMessage="The server that will be queried. Use -ListServers for a list of already configured servers.")]
@@ -115,7 +118,10 @@ Param(
     $Server,
 
     [string]
-    $ConfigFile = "$PSScriptRoot\hentapi-config.dat",
+    $ServerConfig = "$PSScriptRoot\server-config.dat",
+
+    [string]
+    $UserConfig = "$PSScriptRoot\user-config.dat",
 
     [parameter(Mandatory=$true,ParameterSetName="ListServers",HelpMessage="Prints a list of all servers in the config file.")]
     [alias("ListServer")]
@@ -183,25 +189,30 @@ Param(
 
     [parameter(HelpMessage="Returns the first post ID from your search results. This is mostly an internal parameter, so don't worry about it too much.")]
     [switch]
-    $getFirstID
+    $getFirstID,
+
+    [parameter(ParameterSetName="TagSearch",HelpMessage="Limits the maximum amount of posts this program will output/download.")]
+    [alias("lim","max")]
+    [int]
+    $Limit=-1
 )
 
 #functions
-function Split-ServerName {
+<#function Split-ServerName {
     $a, $b = $Server -split "\."
     $a
-}
+}#>
 
-function Get-PageData {
+<#function Get-PageData {
     param( [string]$Url )
     
     if($ssconfig.json){
-        $webRead = $((Invoke-WebRequest -Uri $Url -UserAgent "HentAPI/2.5 (by Fuzion)").Content) -replace "&","" | ConvertFrom-JSON
+        $webRead = $((Invoke-WebRequest -Uri $Url -UserAgent "HentAPI/2.6 (by Fuzion)").Content) -replace "&","" | ConvertFrom-JSON
     } else {
         [xml]$webRead = $((Invoke-WebRequest -Uri $Url).Content) -replace "&",""
     }
     $webRead
-}
+}#>
 
 function Get-TotalPages {
     param( [string]$file, [PsObject]$var )
@@ -239,11 +250,8 @@ function Add-Metadata {
     
     if($Post.tags.getType().Name -eq "String"){
         $tagsList = $Post.tags.Split(" ")
-    } else {
-        $tagsList = Invoke-Expression $ssconfig.tags_exp
     }
 
-    $author = $Post.author
     $metaTags = $tagsList -join ";"
     $file=$Path.split("\")[-1]
     $name = $file.Substring(0,$file.LastIndexOf("."))
@@ -257,7 +265,7 @@ function Add-Metadata {
         if($writable -eq $null){
             $global:writable = (exiftool -listwf) -join ""
         }
-        
+
         switch($oldExt){
             "png" {
                 Write-Progress -Activity "Editing file" -Id 1 -Status "Changing filetype (png -> jpg)" -PercentComplete 50 -ParentId 0
@@ -304,9 +312,9 @@ function Add-Metadata {
             $rating=0
         }
 
-        $time = $Post.created_at
+        <#$time = $Post.created_at
         if($time -eq $null){
-            $time = $Post.date
+            $time = $Post.uploaded
         }
         
         try{
@@ -322,11 +330,11 @@ function Add-Metadata {
             Write-Verbose "The time format was wrong. This could be caused by a lot of things, but I'd have to take a look at it to figure it out. Oops!"
             Write-Verbose "Here's the error:`n"$_
             $creationTime = Get-Date
-        }
+        }#>
         
         Write-Progress -Activity "Editing file" -Status "Writing metadata (tags/author/date)" -PercentComplete 75 -Id 1 -ParentId 0
         exiftool -Artist="${Server}" -XPKeywords="${metaTags}" -Rating="${rating}" $Path -overwrite_original -q -ignoreMinorErrors
-        (get-item $Path).CreationTime = $creationTime
+        (get-item $Path).CreationTime = $Post.uploaded
     }
     catch [System.SystemException] {
         Write-Verbose "ExifTool/ImageMagick/FFMpeg not found. Not writing image metadata..."
@@ -352,7 +360,9 @@ function HashCheck {
     if((Test-Path $Path) -eq $false){
         Write-Verbose ("File `"${Path}`" was not successfully downloaded, retrying...(" + $Count + ")")
         try{
-            (New-Object System.Net.WebClient).DownloadFile((Invoke-Expression "`$Post.$($ssconfig.file_loc)"), $Path)
+        $Post.file
+        $Path
+            (New-Object System.Net.WebClient).DownloadFile($Post.file, $Path)
         } catch{
             throw "$_`ni didn't know what to do here so please fill this in thanks"
             #remove this line to see the real error location ^
@@ -365,7 +375,7 @@ function HashCheck {
         Write-Progress -Activity "Checking file hash.." -Status "Hashing file" -PercentComplete 50 -ParentId 0 -Id 1
     }
     
-    if($hash -eq (Invoke-Expression "`$Post.$($ssconfig.md5_loc)")){
+    if($hash -eq $Post.md5){
         if($Count -gt 1){
             Write-Verbose ("Successfully downloaded file `"" + $Path + "`" after " + $Count + " attempts.")
         }
@@ -376,7 +386,7 @@ function HashCheck {
     Write-Verbose ("MD5 hashes for file `"" + $Path + "`" do not match, retrying...(" + $Count + ")")
     while(Test-Path $Path){del $Path}
     try{
-        (New-Object System.Net.WebClient).DownloadFile((Invoke-Expression "`$Post.$($ssconfig.file_loc)"), $Path)
+        (New-Object System.Net.WebClient).DownloadFile($Post.file, $Path)
     }
     catch{
         if($_.ToString().Contains("(404) Not Found")){
@@ -429,6 +439,77 @@ function FromBase64{
         return FromBase64 -enc $in
     }
 }
+function Clear-Lines {
+    Param (
+
+	    [Parameter(Position=1)]
+	    [int32]$Count=1
+
+    )
+
+    $CurrentLine  = $Host.UI.RawUI.CursorPosition.Y
+    $ConsoleWidth = $Host.UI.RawUI.BufferSize.Width
+
+    $i = 1
+    for ($i; $i -le $Count; $i++) {
+	
+	    [Console]::SetCursorPosition(0,($CurrentLine - $i))
+	    [Console]::Write("{0,-$ConsoleWidth}" -f " ")
+
+    }
+
+    [Console]::SetCursorPosition(0,($CurrentLine - $Count))
+}
+Function Create-Menu {
+    Param(
+        [Parameter(Mandatory=$True)][String]$MenuTitle,
+        [Parameter(Mandatory=$True)][array]$MenuOptions
+    )
+    $MaxValue = $MenuOptions.count-1
+    $Selection = 0
+    $EnterPressed = $False
+    While($EnterPressed -eq $False){
+        Write-Host "$MenuTitle"
+        For ($i=0; $i -le $MaxValue; $i++){
+            If ($i -eq $Selection){
+                Write-Host -BackgroundColor Cyan -ForegroundColor Black "[ $($MenuOptions[$i]) ]"
+            } Else {
+                Write-Host "  $($MenuOptions[$i])  "
+            }
+
+        }
+        $KeyInput = $host.ui.rawui.readkey("NoEcho,IncludeKeyDown").virtualkeycode
+        Switch($KeyInput){
+            13{
+                $EnterPressed = $True
+                Return $Selection
+                Clear-Lines ($MenuOptions.Length+1)
+                break
+            }
+            38{
+                If ($Selection -eq 0){
+                    $Selection = $MaxValue
+                } Else {
+                    $Selection -= 1
+                }
+                Clear-Lines ($MenuOptions.Length+1)
+                break
+            }
+            40{
+                If ($Selection -eq $MaxValue){
+                    $Selection = 0
+                } Else {
+                    $Selection +=1
+                }
+                Clear-Lines ($MenuOptions.Length+1)
+                break
+            }
+            Default{
+                Clear-Lines ($MenuOptions.Length+1)
+            }
+        }
+    }
+}
 
 Function Get-MetaData{
     Param([parameter(ValueFromRemainingArguments=$true)][string[]]$File,[int]$ExifID=-1,[switch]$listId)
@@ -464,17 +545,22 @@ Function Get-MetaData{
     return $MetaDataArray
 }
 
+if( $(Test-Path $ServerConfig) -eq $false ) {
+    Write-Output "No server configuration file was found. Please download the provided server config and place it in the same directory as this program, otherwise hentapi won't work correctly."
+    exit
+}
+
 $settings = [ordered]@{}
 
-if( $(Test-Path $ConfigFile) -eq $false ) {
-    Write-Output "No configuration file was found. Creating new config file..."
+if( $(Test-Path $UserConfig) -eq $false ) {
+    Write-Output "No user configuration file was found. Creating a config for you..."
 } else {
-    $tempSettings = Get-Content "${ConfigFile}" | ConvertFrom-JSON
-    Foreach($property in $tempSettings.psobject.properties) { $settings[$property.Name] = $property.Value }
+    $tempSettings = Get-Content "${UserConfig}" | ConvertFrom-JSON
+    Foreach($property in $tempSettings.servers.psobject.properties) { $settings[$property.Name] = $property.Value }
 }
 
 if($ListServers){
-    if($(Test-Path $ConfigFile)){
+    if($(Test-Path $UserConfig)){
         if($Count){
             $settings.keys.Count
             exit
@@ -598,6 +684,7 @@ if($Update){
     }
 }
 
+#potential bug with empty userconfig
 if($Server -eq "*"){
     foreach($key in $settings.keys){
         Write-Host ($key+": ")
@@ -607,26 +694,77 @@ if($Server -eq "*"){
     exit
 }
 
-$trueName = Split-ServerName
+$trueName = $server.Split(".")[0]
 
 if( $settings.$trueName -eq $null ) {
     Write-Host "Server was not found in config file. Commencing manual setup..."
     $settings.$trueName = @{}
 
-    $APIUrl = Read-Host "Please enter the API url for ${Server}"
-    $p1, $p2 = $APIUrl -split "\?"
-    if($p1 -eq $APIUrl){
-        $settings.$trueName.url = $APIUrl + "?"
-    } else {
-        $settings.$trueName.url = $APIUrl + "&"
-    }
+    $newUrl = Read-Host "Please enter the url for $server (ex: gelbooru.com)"
+    $types = (Get-Content "${ServerConfig}" | ConvertFrom-JSON).psobject.properties.name
+    $options = $types + "Other/Automatic"
+    $choice = Create-Menu -MenuTitle "Please select server type for `"$server`": (UP/DOWN/ENTER)" -MenuOptions $options
+    $ssconfig=@{}
+    $ssconfig.url=$newUrl
 
-    $settings.$trueName.post = Read-Host "Please enter the post ID query suffix"
-    $settings.$trueName.page = Read-Host "Please enter the page # query suffix"
-    $settings.$trueName.tags = Read-Host "Please enter the tag query suffix"
-    ConvertTo-JSON $settings -Compress -Depth 6 >$ConfigFile
+    if($choice -eq $types.length){
+        Write-Host "Attempting to detect server type..."
+        $typeFunctions=(Get-Content "${ServerConfig}" | ConvertFrom-JSON)
+        forEach($typeName in $types){
+            Invoke-Expression $typeFunctions.$typeName.getTaggedPosts
+            try{
+                $testPost = Get-TaggedPosts -Tags " " -Count 1
+                if($testPost.id -ne $null){$settings.$trueName.type=$typeName}
+            } catch {
+                continue
+            }
+        }
+        if($settings.$trueName.type -eq $null){
+            Write-Output "The server type couldn't be automatically detected. Please submit a feature request on hentapi's Github repo (https://github.com/EK720/hentapi) if you want it to be added faster."
+            exit
+        }
+    }else{
+        Write-Host "Verifying server type..."
+        Invoke-Expression (Get-Content "${ServerConfig}" | ConvertFrom-JSON).($types[$choice]).getTaggedPosts
+        try{
+            $testPost = Get-TaggedPosts -Tags " " -Count 1
+            if($testPost.id -ne $null){
+                $settings.$trueName.type=$types[$choice]
+            }else{
+                Write-Host "The server type didn't match the type you selected. Please try choosing another type, or using the `"Other/Automatic`" option if you don't know what to choose."
+                exit
+            }
+        } catch {
+            if($_.Exception.Message.contains("404")){
+                Write-Host "The server type didn't match the type you selected.`nPlease try choosing another type, or using the `"Other/Automatic`" option if you don't know what to choose."
+                exit
+            }else{
+                throw "oh noes! an unknown ewwow occuwwed!`n$_"
+            }
+        }
+    }
+    $settings.$trueName.url = $newUrl
+    #if you get errored here, make this bit work!
+    #deliberate error
+    $saveConfig = (Get-Content "${UserConfig}" | ConvertFrom-JSON)
+    $saveConfig.servers=$settings
+    (ConvertTo-JSON $saveConfig -Depth 6 ) > $UserConfig
+    Write-Output "Server `"$server`" successfully registered."
+
+    #I have to reset the settings variable, otherwise it's not in the right datatype to be put into $ssconfig.
+    $settings=[ordered]@{}
+    $tempSettings = Get-Content "$UserConfig" | ConvertFrom-JSON
+    Foreach($property in $tempSettings.servers.psobject.properties) { $settings[$property.Name] = $property.Value }
 }
 
+$ssconfig = @{}
+
+$tempSettings = (Get-Content "${ServerConfig}" | ConvertFrom-JSON).($settings.$trueName.type)
+Foreach($property in $tempSettings.psobject.properties) { $ssconfig[$property.Name] = $property.Value }
+Foreach($property in $settings.$trueName.psobject.properties) { $ssconfig[$property.Name] = $property.Value }
+Foreach($property in (Get-Content "${UserConfig}" | ConvertFrom-JSON).other.psobject.properties) { $ssconfig[$property.Name] = $property.Value }
+
+<# I don't think I need these. We'll wait and see.
 #populates the config variable
 $ssconfig = $settings.$trueName
 #if certain server-specific settings are null, this populates them
@@ -641,7 +779,7 @@ if($ssconfig.md5_loc -eq $null){
 }
 if($ssconfig.json -eq $null){
     Add-Member "json" $False -InputObject $ssconfig
-}
+}#>
 
 if($Download){
     if($DLPath[0] -eq "." -and $DLPath[1] -eq "\"){
@@ -650,7 +788,7 @@ if($Download){
     $hashes=""
 
     if($(Test-Path -Path $DLPath) -eq $false){
-        mkdir $DLPath >$null
+        $DLPath=(mkdir $DLPath).FullName
     }else{
         $DLPath = (Get-Item $DLPath).FullName
         if($(Test-Path -Path "${DLPath}\hashlist") -eq $true){
@@ -666,37 +804,44 @@ if($Download){
     $Global:Data = $null
 }
 
-if($DLPath[-1] -ne "\"){$DLPath += "\"}
+if($DLPath[-1] -ne "\" -and $DLPath[-1] -ne "/"){$DLPath += "\"}
 
 if($PSCmdlet.ParameterSetName -eq "PostSearch"){
+    Invoke-Expression $ssconfig.getPost
+    $postRaw = Get-Post -id $Post -raw
+    if($postRaw -eq $null){
+        if($Count){
+            0
+        }else{
+            Write-Host "Post #$post does not exist."
+        }
+        exit
+    }
+    
     if($Count){
         1
         exit
     }
 
-    $postXML = Get-PageData -Url $(($ssconfig).url + ($ssconfig).post + "=${Post}")
-    if((Invoke-Expression "`$postXML.$($ssconfig.post_loc).count") -gt 1){
-        Write-Host "Sorry, this server doesn't support searching for individual posts. Please try searching with tags instead."
-        exit
-    }
-
     if($array -and !$Download){
         #outputs raw post
-        return (Invoke-Expression "`$postXML.$($ssconfig.post_loc)")
+        return $postRaw
     }
+
+    $postData = Get-Post -id $Post
 
     if($Download){
         Write-Host "Downloading post #${Post} from server `"${Server}`".."
-        $id = Invoke-Expression "`$postXML.$($ssconfig.post_loc).id"
+        $id = $Post
 
         if($MD5){
-            $id = Invoke-Expression "`$postXML.$($ssconfig.post_loc).$($ssconfig.md5_loc)"
+            $id = $postData.md5
         }
 
         Get-EventSubscriber -Force | Unregister-Event -Force
         Get-Job | Remove-Job -Force
 
-        $DLExt = (Invoke-Expression "`$postXML.$($ssconfig.post_loc).$($ssconfig.file_loc)").split('\.')[-1]
+        $DLExt = $postData.file.split('\.')[-1]
         $DLFile = $DLPath + $id + "." + $DLExt
         $DLClient = New-Object System.Net.WebClient
         $Global:isDownloaded = $false
@@ -716,10 +861,10 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
             $Global:isDownloaded = $True
         }
         
-        if($hashes.IndexOf((Invoke-Expression "`$postXML.$($ssconfig.post_loc).$($ssconfig.md5_loc)")) -eq -1){
+        if($hashes.IndexOf($postData.md5) -eq -1){
             if((get-childitem ($DLPath+"*") | where Name -match "$id\.(${badExt})").count -eq 0){
             try{
-            $DLClient.DownloadFileAsync((Invoke-Expression "`$postXML.$($ssconfig.post_loc).$($ssconfig.file_loc)"), $DLFile)
+            $DLClient.DownloadFileAsync($postData.file, $DLFile)
             Write-Progress -Activity "Downloading file" -Id 0 -Status "Connecting..." -PercentComplete 0
 
 
@@ -732,9 +877,9 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
             }
 
                 if($array){break}
-                if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post (Invoke-Expression "`$postXML.$($ssconfig.post_loc)")}
-                Invoke-Expression "`$postXML.$($ssconfig.post_loc).$($ssconfig.md5_loc)">>$DLPath\hashlist
-                $metaExt = Add-Metadata -Path $DLFile -Post (Invoke-Expression "`$postXML.$($ssconfig.post_loc)")
+                if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $postData}
+                $postData.md5>>$DLPath\hashlist
+                $metaExt = Add-Metadata -Path $DLFile -Post $postData
                 if($metaExt -ne $null){
                     $DLFile = $DLFile.Substring(0,$DLFile.Length-3) + $metaExt
                 }
@@ -748,7 +893,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                 $Data = $null
             }
             }else{
-                Invoke-Expression "`$postXML.$($ssconfig.post_loc).$($ssconfig.md5_loc)">>$DLPath\hashlist
+                $postData.md5>>$DLPath\hashlist
             }
         }else{
             Write-Verbose ("Skipping download of file `""+$DLFile.split("\")[-1]+"`".")
@@ -761,80 +906,58 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
         }
         exit
     }else{
-        $output = ($ssconfig).pre + (Invoke-Expression "`$postXML.$($ssconfig.post_loc).$($ssconfig.file_loc)")
+        if($md5){
+            $output = $postData.md5
+        }else{
+            $output = $postData.file
+        }
     }
 } elseif($PSCmdlet.ParameterSetName -eq "TagSearch") {
-    $testData = Get-PageData -Url $(($ssconfig).url + ($ssconfig).page + "=1&" + ($ssconfig).tags + "=${Tags}")
-    $pages = Get-TotalPages -var $testData
-    $startPage = 1
+    #$testData = Get-PageData -Url $(($ssconfig).url + ($ssconfig).page + "=1&" + ($ssconfig).tags + "=${Tags}")
+    #$pages = Get-TotalPages -var $testData
+    #$startPage = 1
+
+    Invoke-Expression $ssconfig.getCount
+    $postCount = Get-Count -tags $Tags
 
     if($Count){
-        if($ssconfig.json){ if($tags.Contains(" ") -or $tags.Contains(":") -or $($ssconfig.single_tag_url -eq $null)){
-            $cont = Read-Host -Prompt "Counting search results on this server could take a very long time (>10 min!) Would you like to proceed? (Y/N)"
-            if($cont[0] -ieq 'Y'){
-                $page = Get-PageData -Url $($ssconfig.url + $ssconfig.tags + "=${Tags}&limit=" + $ssconfig.post_limit)
-                $num = Invoke-Expression "`$page.$($ssconfig.post_loc).count"
-                while((Invoke-Expression "`$page.$($ssconfig.post_loc).count") -eq $ssconfig.post_limit){
-                    $lastCountID = Invoke-Expression "`$page.$($ssconfig.post_loc)[-1].id"
-                    $page = Get-PageData -Url $($ssconfig.url + $ssconfig.tags + "=${Tags}&" + $ssconfig.page + "=b" + $lastCountID + "&limit=" + $ssconfig.post_limit)
-                    $num += Invoke-Expression "`$page.$($ssconfig.post_loc).count"
-                }
-                return $num
-            }
-        } else {
-            $tag=Get-PageData -Url $($ssconfig.single_tag_url+"search[name_matches]="+${Tags})
-            if($tag.post_count -eq $null){
-                $tag=Get-PageData -Url $($ssconfig.single_alias_url+"search[name_matches]="+${Tags})
-            }
-            $tag.post_count
-        }
-        } else {
-            $testData.posts.count
-        }
+        $postCount
         exit
     }
 
+    Invoke-Expression $ssconfig.getTaggedPosts
+
     if($ssconfig.json){
-        Write-Verbose $("Found posts matching tag(s) `"$Tags`".")
+        throw "HEY BITCH MAKE THIS WORK, LINE 807 OR SOMETHING"
     } else {
-        Write-Verbose $("Found " + ($testData).posts.count + " posts matching tag(s) `"$Tags`".")
+        Write-Verbose $("Found $postCount posts matching tag(s) `"$Tags`".")
     }
 
-    if($testData.posts.offset -gt 0 -or (Invoke-Expression "`$testData.$($ssconfig.post_loc).length") -eq 0){
-        $startPage = 0
-        $testData = Get-PageData -Url $(($ssconfig).url + ($ssconfig).page + "=0&" + ($ssconfig).tags + "=${Tags}")
-        $pages--
-    }
-
-    $firstID = Invoke-Expression "`$testData.$($ssconfig.post_loc)[0].id"
+    $firstID = (Get-TaggedPosts -tags $Tags -count 1).id
 
     if($getFirstID){
         $firstID
         exit
     }
 
-    if((Invoke-Expression "`$testData.$($ssconfig.post_loc).count") -eq 1){
+    if($postCount -eq 1){
+        $postData = (Get-TaggedPosts -tags $Tags -raw)[0]
         if($array -and !$Download){
-            $output = Invoke-Expression "`$testData.$($ssconfig.post_loc)"
+            $output = $postData
         }elseif($Download){
-            $id = Invoke-Expression "`$testData.$($ssconfig.post_loc).id"
+            $id = $postData.id
 
             Write-Host "Downloading post #${id} from server `"${Server}`"..."
 
             if($MD5){
-                $id = Invoke-Expression "`$testData.$($ssconfig.post_loc).$($ssconfig.md5_loc)"
+                $id = $postData.md5
             }
 
             Get-EventSubscriber -Force | Unregister-Event -Force
             Get-Job | Remove-Job -Force
 
             $DLClient = New-Object System.Net.WebClient
-            $Post = Invoke-Expression "`$testData.$($ssconfig.post_loc)"
-            if((Invoke-Expression "`$post.$($ssconfig.file_loc)") -eq $null){
-                Invoke-Expression $ssconfig.blacklist_exp
-                $Post = reconstruct $Post
-            }
-            $DLExt = (Invoke-Expression "`$Post.$($ssconfig.file_loc)").split('.')[-1]
+            $DLExt = $postData.file.split('.')[-1]
             $DLFile = $DLPath + $id + "." + $DLExt
             $Global:isDownloaded = $false
             $Global:Data = $null
@@ -853,10 +976,10 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                 $badExt = $DLExt
             }
 
-            if($hashes.IndexOf((Invoke-Expression "`$Post.$($ssconfig.md5_loc)")) -eq -1){
+            if($hashes.IndexOf($postData.md5) -eq -1){
                 if((get-childitem ($DLPath+"*") | where Name -match "$id\.(${badExt})").count -eq 0){
                 try{
-                    $DLClient.DownloadFileAsync((Invoke-Expression "`$Post.$($ssconfig.file_loc)"), $DLFile)
+                    $DLClient.DownloadFileAsync($postData.file, $DLFile)
                     
                     while(!$isDownloaded){
                         $progress = $Data.SourceArgs.ProgressPercentage
@@ -868,7 +991,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
                     if($array){return}
                     if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $Post}
-                    $testData.posts.post.md5>>$DLPath\hashlist
+                    $postData.md5>>$DLPath\hashlist
                     $metaExt = Add-Metadata -Path $DLFile -Post $Post
                     if($metaExt -ne $null){
                         $DLFile = $DLPath + $id + "." + $metaExt
@@ -882,7 +1005,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                     }
                 }
                 } else {
-                    Invoke-Expression "`$Post.$($ssconfig.md5_loc)">>$DLPath\hashlist
+                    $postData.md5>>$DLPath\hashlist
                 }
             }
 
@@ -902,12 +1025,12 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
             exit
         }else{
-            $output = Invoke-Expression "`$testData.$($ssconfig.post_loc).$($ssconfig.file_loc)"
+            $output = $postData.file
         }
     } else {
         [String[]]$imageLinks = @()
-        $Posts = $testData.posts.count
         $updateMode = Test-Path $DLPath"update"
+        $pages = Get-Count -tags $tags -Pages
 
         if($Download){
             Get-EventSubscriber -Force | Unregister-Event -Force
@@ -919,283 +1042,134 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
             $completedJob = Register-ObjectEvent -InputObject $DLClient -EventName DownloadFileCompleted -SourceIdentifier Web.DownloadFileCompleted -MaxTriggerCount 999999999 -Action {$Global:isDownloaded = $True}
             $children = get-childitem $DLPath
 
-            if($DLPath[-1] -ne "\"){$DLPath += "\"}
+            if($DLPath[-1] -ne "\" -and $DLPath[-1] -ne "/"){$DLPath += "\"}
             if($updateMode){$updPosts = FromBase64 (Get-Content $DLPath"update")[1]}
-
+            
             #download function for json servers
-            if($ssconfig.json){
+            if($true){
                 if($updateMode){
-                    Write-Progress -Activity ("Updating collection in `"" + $DLPath + "`"") -Id 0 -Status ("Server: " + $ssconfig.url.split("/")[0]) -PercentComplete 0 -CurrentOperation ("Retrieving data for page 1")
+                    Write-Progress -Activity ("Updating collection in `"$DLPath`"") -Id 0 -Status ("Server: " + $ssconfig.url) -PercentComplete 0 -CurrentOperation ("Retrieving post data")
+                    throw "make this more efficient by only getting the amount of posts equal to (queries:lastID-getfirstID`n
+                    Alternatively, I could also add a 'break' parameter to getTaggedPosts and just have -Update use that"
                 }else{
-                    Write-Progress -Activity ("Downloading from " + $ssconfig.url.split("/")[0]) -Id 0 -Status "Page 1" -PercentComplete 0 -CurrentOperation ("Retrieving data for page 1")
+                    Write-Progress -Activity ("Downloading from " + $ssconfig.url) -Id 0 -Status "Loading..." -PercentComplete 0 -CurrentOperation ("Retrieving post data")
                 }
 
-                $CurrentPage = Get-PageData -Url $(($ssconfig).url + ($ssconfig).tags + "=${Tags}")
-                $pageNum=1
-                $postNum=1
-
-                while((Invoke-Expression "`$CurrentPage.$($ssconfig.post_loc).count") -gt 0){
-                    
-                    if($updateMode){
-                        Write-Progress -Activity ("Updating collection in `"" + $DLPath + "`"") -Id 0 -Status ("Server: " + $ssconfig.url.split("/")[0]) -PercentComplete 0 -CurrentOperation ("Downloading post #$postNum" )
-                    }else{
-                        Write-Progress -Activity ("Downloading from " + $ssconfig.url.split("/")[0]) -Id 0 -Status ("Page $pageNum") -PercentComplete 0 -CurrentOperation ("Downloading post #$postNum" )
-                    }
-                    ForEach-Object -InputObject (Invoke-Expression "`$CurrentPage.$($ssconfig.post_loc)") {
-                        $id = $_.id
-                        
-                        if($MD5){
-                            $id = Invoke-Expression "`$_.$($ssconfig.md5_loc)"
-                        }
-
-                        for($l=0; $l -lt $_.length; $l++){
-                            if($hashes.IndexOf((Invoke-Expression "`$_[$l].$($ssconfig.md5_loc)")) -eq -1){
-                                if((Invoke-Expression "`$_[$l].$($ssconfig.file_loc)") -eq $null){
-                                    Invoke-Expression $ssconfig.blacklist_exp
-                                    $_[$l] = reconstruct $_[$l]
-                                }
-                                $DLExt = (Invoke-Expression "`$_[$l].$($ssconfig.file_loc)").split('.')[-1]
-                                $DLID = $id[$l]
-                                $DLFile = $DLPath + $DLID + "." + $DLExt
-
-                                if($invalidExtensions.$DLExt -ne $null){
-                                    $badExt = $DLExt + "|" + $invalidExtensions.$DLExt
-                                } else {
-                                    $badExt = $DLExt
-                                }
-
-                                if(($children | where Name -match "$DLID\.(${badExt})meta").count -eq 1 -and !$updateMode){
-                                    $untagged = $children | where Name -match "$DLID\.(${badExt})meta"
-                                    $newName = $untagged.name.Substring(0,$untagged.Name.Length-4)
-                                    ren $untagged.fullname $newName
-                                    Add-Metadata -Path ($DLPath+$newName) -Post $_[$l] > $null
-                                    Invoke-Expression "`$_[$l].$($ssconfig.md5_loc)">>($DLPath+"hashlist")
-                                    continue
-                                }
-
-                                if(($children | where Name -match "$DLID\.(${badExt})").count -eq 0){
-                                    try{
-                                    $Global:isDownloaded = $False
-                                    $Global:dataRegistered = $False
-                                    $DLClient.DownloadFileAsync(($ssconfig).pre + (Invoke-Expression "`$_[$l].$($ssconfig.file_loc)"), $DLFile)
-                                
-                                    while(!$isDownloaded){
-                                        $progress = $Data.SourceArgs.ProgressPercentage
-                                        if(!$dataRegistered){$progress = 0}
-                                        $sizeBytes = $Data.SourceArgs.TotalBytesToReceive
-                                        $downloadedBytes = $Data.SourceArgs.BytesReceived
-                                        Write-Progress -Activity "Downloading file" -Id 1 -ParentId 0 -Status " " -PercentComplete $progress -CurrentOperation "Downloading file $DLFile, have $downloadedBytes of $sizeBytes bytes"
-                                    }
-                                    $DLClient.CancelAsync()
-
-                                    Get-Job | Stop-Job
-                                    Get-job | Remove-Job -Force
-
-                                    Get-EventSubscriber -Force | Unregister-Event -Force
-                                    $dataJob = Register-ObjectEvent -InputObject $DLClient -EventName DownloadProgressChanged -SourceIdentifier Web.DownloadProgressChanged -SupportEvent -Action {$Global:Data = $event;$Global:dataRegistered = $True}
-                                    $completedJob = Register-ObjectEvent -InputObject $DLClient -EventName DownloadFileCompleted -SourceIdentifier Web.DownloadFileCompleted -MaxTriggerCount 999999999 -Action {$Global:isDownloaded = $True}
-                                
-                                    } finally{
-                                        if(!$isDownloaded){
-                                            $DLClient.CancelAsync()
-                                            del $DLFile
-                                            Write-Verbose "Ctrl-C recieved, cancelling download..."
-                                        }
-                                    }
-
-                                    if($array){continue}
-                                    if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $_[$l]}
-                                    Add-Metadata -Path $DLFile -Post $_[$l] > $null
-                                }elseif($updateMode){
-                                    if((Get-MetaData -File ($children | where Name -match "$DLID\.(${badExt})").Name -ExifID 20) -eq $trueName){
-                                        del $DLPath"update"
-                                        exit
-                                    }else{
-                                        Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
-                                    }
-                                }
-                                Invoke-Expression "`$_[$l].$($ssconfig.md5_loc)">>($DLPath+"hashlist")
-                            }elseif($updateMode){
-                                $DLExt = (Invoke-Expression "`$_[$l].$($ssconfig.file_loc)").split('.')[-1]
-                                $DLID = $id[$l]
-                                $DLFile = $DLPath + $DLID + "." + $DLExt
-
-                                if($invalidExtensions.$DLExt -ne $null){
-                                    $badExt = $DLExt + "|" + $invalidExtensions.$DLExt
-                                } else {
-                                    $badExt = $DLExt
-                                }
-
-                                if(($children | where Name -match "$DLID\.(${badExt})").count -ne 0){
-                                    if((Get-MetaData -File ($children | where Name -match "$DLID\.(${badExt})").Name -ExifID 20) -eq $trueName){
-                                        del $DLPath"update"
-                                        exit
-                                    }else{
-                                        Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
-                                    }
-                                }else{
-                                    Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
-                                }
-                            }else{
-                                Write-Verbose ("Skipping download of file `"" + $id[$l] + "." + (Invoke-Expression "`$_[$l].$($ssconfig.file_loc)").split('\.')[-1] + "`".")
-                            }
-
-                            $postNum++
-
-                            if($updateMode){
-                                Write-Progress -Activity ("Updating collection in `"" + $DLPath + "`"") -Id 0 -Status ("Server: " + $ssconfig.url.split("/")[0]) -CurrentOperation ("Downloading post #$postNum" )
-                            }else{
-                                Write-Progress -Activity ("Downloading from " + $ssconfig.url.split("/")[0]) -Id 0 -Status ("Page $pageNum") -CurrentOperation ("Downloading post #$postNum" )
-                            }
-                        }
-                    }
-                    $CurrentPage = Get-PageData -Url $(($ssconfig).url + ($ssconfig).page + "=b" + $id[-1] + "&" + ($ssconfig).tags + "=${Tags}")
-
-                    if($updateMode){
-                        Write-Host ("Updated page $pageNum.")
-                    }else{
-                        Write-Host ("Downloaded page $pageNum.")
-                    }
-                    $pageNum++
-                }
-                $query = @{}
-                $query.server = $Server
-                $query.tags = $Tags
-                $query.firstID = $firstID
-                $query.md5 = if($MD5){$true}else{$false}
-                $queryString = ConvertTo-JSON $query -Compress
-                ToBase64 $queryString >> ($DLPath + "queries")
-
-                exit
-            }
-
-            #download function for xml servers
-            for( $i=$startPage; $i -le $pages; $i++){
-                if($updateMode){
-                    Write-Progress -Activity ("Updating collection in `"" + $DLPath + "`"") -Id 0 -Status ("Server: " + $ssconfig.url.split("/")[0]) -PercentComplete 0 -CurrentOperation ("Retrieving data for page " + ($i-$startPage+1))
-                }else{
-                    Write-Progress -Activity ("Downloading from " + $ssconfig.url.split("/")[0]) -Id 0 -Status ("Page " + $($i + (1-$startPage)) + " of " + ($pages + (1-$startPage))) -PercentComplete 0 -CurrentOperation ("Retrieving data for page " + ($i-$startPage+1))
-                }
+                $Posts=Get-TaggedPosts -Tags $Tags -Count $Limit
                 
-                $CurrentPage = Get-PageData -Url $(($ssconfig).url + ($ssconfig).page + "=$i&" + ($ssconfig).tags + "=${Tags}")
-
-                if($updateMode){
-                    Write-Progress -Activity ("Updating collection in `"" + $DLPath + "`"") -Id 0 -Status ("Server: " + $ssconfig.url.split("/")[0]) -PercentComplete 0 -CurrentOperation ("Downloading post " + $(1+(($i-$startPage)*$_.length)) + "/${updPosts}" )
-                }else{
-                    Write-Progress -Activity ("Downloading from " + $ssconfig.url.split("/")[0]) -Id 0 -Status ("Page " + $($i + (1-$startPage)) + " of " + ($pages + (1-$startPage))) -PercentComplete 0 -CurrentOperation ("Downloading post " + $(1+(($i-$startPage)*$_.length)) + "/${Posts}" )
-                }
-                ForEach-Object -InputObject $CurrentPage.posts.post {
-                    $id = $_.id
+                for($i=0;$i -lt $Posts.Length;$i++){
+                    $pageNum = [Math]::ceiling(($i+1*$pages)/$postCount)
+                    if($updateMode){
+                        Write-Progress -Activity ("Updating collection in `"$DLPath`"") -Id 0 -Status ("Server: " + $ssconfig.url) -PercentComplete ([Math]::ceiling($i*100/$Posts.Length)) -CurrentOperation ("Downloading post #$($i+1)" )
+                    }else{
+                        Write-Progress -Activity ("Downloading from " + $ssconfig.url) -Id 0 -Status ("Page $pageNum/"+ [Math]::ceiling(($Posts.length*$pages)/$postCount)) -PercentComplete ([Math]::ceiling($i*100/$Posts.Length)) -CurrentOperation ("Downloading post #$($i+1)" )
+                    }
+                    $id = $Posts.id
 
                     if($MD5){
-                        $id = $_.md5
+                        $id = $Posts.md5
                     }
 
-                    for($l=0; $l -lt $_.length; $l++){
-                        if($hashes.IndexOf($_[$l].md5) -eq -1){
-                            $DLExt = ($_[$l].file_url).split('.')[-1]
-                            $DLID = $id[$l]
-                            $DLFile = $DLPath + $DLID + "." + $DLExt
+                    if($hashes.IndexOf($Posts[$i].md5) -eq -1){
+                        $DLExt = $Posts[$i].file.split('.')[-1]
+                        $DLID = $id[$i]
+                        $DLFile = $DLPath + $DLID + "." + $DLExt
 
-                            if($invalidExtensions.$DLExt -ne $null){
-                                $badExt = $DLExt + "|" + $invalidExtensions.$DLExt
-                            } else {
-                                $badExt = $DLExt
-                            }
+                        if($invalidExtensions.$DLExt -ne $null){
+                            $badExt = $DLExt + "|" + $invalidExtensions.$DLExt
+                        } else {
+                            $badExt = $DLExt
+                        }
 
-                            if(($children | where Name -match "$DLID\.(${badExt})meta").count -eq 1 -and !$updateMode){
-                                $untagged = $children | where Name -match "$DLID\.(${badExt})meta"
-                                $newName = $untagged.name.Substring(0,$untagged.Name.Length-4)
-                                ren $untagged.fullname $newName
-                                Add-Metadata -Path ($DLPath+$newName) -Post $_[$l] > $null
-                                $_[$l].md5>>($DLPath+"hashlist")
-                                continue
-                            }
+                        if(($children | where Name -match "$DLID\.(${badExt})meta").count -eq 1 -and !$updateMode){
+                            $untagged = $children | where Name -match "$DLID\.(${badExt})meta"
+                            $newName = $untagged.name.Substring(0,$untagged.Name.Length-4)
+                            ren $untagged.fullname $newName
+                            Add-Metadata -Path ($DLPath+$newName) -Post $Posts[$i] > $null
+                            $Posts[$i].md5>>($DLPath+"hashlist")
+                            continue
+                        }
 
-                            if(($children | where Name -match "$DLID\.(${badExt})").count -eq 0){
-                                try{
-                                $Global:isDownloaded = $False
-                                $Global:dataRegistered = $False
-                                $DLClient.DownloadFileAsync(($ssconfig).pre + $_[$l].file_url, $DLFile)
+                        if(($children | where Name -match "$DLID\.(${badExt})").count -eq 0){
+                            try{
+                            $Global:isDownloaded = $False
+                            $Global:dataRegistered = $False
+                            $DLClient.DownloadFileAsync($Posts[$i].file, $DLFile)
                                 
-                                while(!$isDownloaded){
-                                    $progress = $Data.SourceArgs.ProgressPercentage
-                                    if(!$dataRegistered){$progress = 0}
-                                    $sizeBytes = $Data.SourceArgs.TotalBytesToReceive
-                                    $downloadedBytes = $Data.SourceArgs.BytesReceived
-                                    Write-Progress -Activity "Downloading file" -Id 1 -ParentId 0 -Status " " -PercentComplete $progress -CurrentOperation "Downloading file $DLFile, have $downloadedBytes of $sizeBytes bytes"
-                                }
-                                $DLClient.CancelAsync()
+                            while(!$isDownloaded){
+                                $progress = $Data.SourceArgs.ProgressPercentage
+                                if(!$dataRegistered){$progress = 0}
+                                $sizeBytes = $Data.SourceArgs.TotalBytesToReceive
+                                $downloadedBytes = $Data.SourceArgs.BytesReceived
+                                Write-Progress -Activity "Downloading file" -Id 1 -ParentId 0 -Status " " -PercentComplete $progress -CurrentOperation "Downloading file $DLFile, have $downloadedBytes of $sizeBytes bytes"
+                            }
+                            $DLClient.CancelAsync()
 
-                                Get-Job | Stop-Job
-                                Get-job | Remove-Job -Force
+                            Get-Job | Stop-Job
+                            Get-job | Remove-Job -Force
 
-                                Get-EventSubscriber -Force | Unregister-Event -Force
-                                $dataJob = Register-ObjectEvent -InputObject $DLClient -EventName DownloadProgressChanged -SourceIdentifier Web.DownloadProgressChanged -SupportEvent -Action {$Global:Data = $event;$Global:dataRegistered = $True}
-                                $completedJob = Register-ObjectEvent -InputObject $DLClient -EventName DownloadFileCompleted -SourceIdentifier Web.DownloadFileCompleted -MaxTriggerCount 999999999 -Action {$Global:isDownloaded = $True}
+                            Get-EventSubscriber -Force | Unregister-Event -Force
+                            $dataJob = Register-ObjectEvent -InputObject $DLClient -EventName DownloadProgressChanged -SourceIdentifier Web.DownloadProgressChanged -SupportEvent -Action {$Global:Data = $event;$Global:dataRegistered = $True}
+                            $completedJob = Register-ObjectEvent -InputObject $DLClient -EventName DownloadFileCompleted -SourceIdentifier Web.DownloadFileCompleted -MaxTriggerCount 999999999 -Action {$Global:isDownloaded = $True}
                                 
-                                } finally{
-                                    if(!$isDownloaded){
-                                        $DLClient.CancelAsync()
-                                        del $DLFile
-                                        Write-Verbose "Ctrl-C recieved, stopping download..."
-                                    }
-                                }
-
-                                if($array){continue}
-                                if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $_[$l]}
-                                Add-Metadata -Path $DLFile -Post $_[$l] > $null
-                            }elseif($updateMode){
-                                if((Get-MetaData -File ($children | where Name -match "$DLID\.(${badExt})").Name -ExifID 20) -eq $trueName){
-                                    del $DLPath"update"
-                                    exit
-                                }else{
-                                    Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
+                            } finally{
+                                if(!$isDownloaded){
+                                    $DLClient.CancelAsync()
+                                    del $DLFile
+                                    Write-Verbose "Ctrl-C recieved, cancelling download..."
                                 }
                             }
-                            $_[$l].md5>>($DLPath+"hashlist")
+
+                            if($array){continue}
+                            if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $Posts[$i]}
+                            Add-Metadata -Path $DLFile -Post $Posts[$i] > $null
                         }elseif($updateMode){
-                            $DLExt = ($_[$l].file_url).split('.')[-1]
-                            $DLID = $id[$l]
-                            $DLFile = $DLPath + $DLID + "." + $DLExt
-
-                            if($invalidExtensions.$DLExt -ne $null){
-                                $badExt = $DLExt + "|" + $invalidExtensions.$DLExt
-                            } else {
-                                $badExt = $DLExt
+                            if((Get-MetaData -File ($children | where Name -match "$DLID\.(${badExt})").Name -ExifID 20) -eq $trueName){
+                                del $DLPath"update"
+                                exit
+                            }else{
+                                Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
                             }
+                        }
+                        $Posts[$i].md5>>($DLPath+"hashlist")
+                    }elseif($updateMode){
+                        $DLExt = $Posts[$i].file.split('.')[-1]
+                        $DLID = $id[$i]
+                        $DLFile = $DLPath + $DLID + "." + $DLExt
 
-                            if(($children | where Name -match "$DLID\.(${badExt})").count -ne 0){
-                                if((Get-MetaData -File ($children | where Name -match "$DLID\.(${badExt})").Name -ExifID 20) -eq $trueName){
-                                    del $DLPath"update"
-                                    exit
-                                }else{
-                                    Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
-                                }
+                        if($invalidExtensions.$DLExt -ne $null){
+                            $badExt = $DLExt + "|" + $invalidExtensions.$DLExt
+                        } else {
+                            $badExt = $DLExt
+                        }
+
+                        if(($children | where Name -match "$DLID\.(${badExt})").count -ne 0){
+                            if((Get-MetaData -File ($children | where Name -match "$DLID\.(${badExt})").Name -ExifID 20) -eq $trueName){
+                                del $DLPath"update"
+                                exit
                             }else{
                                 Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
                             }
                         }else{
-                            Write-Verbose ("Skipping download of file `"" + $id[$l] + "." + ($_[$l].file_url).split('.')[-1] + "`".")
+                            Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
                         }
+                    }else{
+                        Write-Verbose ("Skipping download of file `"" + $id[$i] + "." + $Posts[$i].file.split('\.')[-1] + "`".")
+                    }
 
-                        if($updateMode){
-                            $progress=[math]::Round(($l+1)*100/$updPosts)
-                            if($progress -gt 100){$progress = 100}
-                            Write-Progress -Activity ("Updating collection in `"" + $DLPath + "`"") -Id 0 -Status ("Server: " + $ssconfig.url.split("/")[0]) -PercentComplete $progress -CurrentOperation ("Downloading post " + $(($l+1)+(($i-$startPage)*$_.length)) + "/${updPosts}" )
-                        }else{
-                            Write-Progress -Activity ("Downloading from " + $ssconfig.url.split("/")[0]) -Id 0 -Status ("Page " + $($i + (1-$startPage)) + " of " + ($pages + (1-$startPage))) -PercentComplete $([math]::Round(($l+1)*100/$_.length)) -CurrentOperation ("Downloading post " + $(($l+1)+(($i-$startPage)*$_.length)) + "/${Posts}" )
-                        }
+                    if($updateMode){
+                        Write-Progress -Activity ("Updating collection in `"" + $DLPath + "`"") -Id 0 -Status ("Server: " + $ssconfig.url) -CurrentOperation ("Downloading post #$i" )
+                    }else{
+                        Write-Progress -Activity ("Downloading from " + $ssconfig.url) -Id 0 -Status ("Page $pageNum") -CurrentOperation ("Downloading post #$i" )
                     }
                 }
-
+                
                 if($updateMode){
-                    Write-Host ("Updated page " + $($i + (1-$startPage)) + "/" + [math]::Ceiling($UpdPosts/[math]::Round($Posts/$pages)) + ".")
+                    Write-Host ("Updated page $pageNum.")
                 }else{
-                    Write-Host ("Downloaded page " + $($i + (1-$startPage)) + "/" + ($pages + (1-$startPage)) + ".")
+                    Write-Host ("Downloaded page $pageNum.")
                 }
             }
-
             $query = @{}
             $query.server = $Server
             $query.tags = $Tags
@@ -1206,51 +1180,35 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
             exit
         }
-
+    }
         if($array){
             $arrayFull = $false
             try{
-                $global:postArray = @{}
-                for( $i=$startPage; $i -le $pages; $i++){
+                $global:postArray = Get-TaggedPosts -tags $tags -count $Limit -raw
+                <#for( $i=$startPage; $i -le $pages; $i++){
                     $CurrentPage = Get-PageData -Url $(($ssconfig).url + ($ssconfig).page + "=$i&" + ($ssconfig).tags + "=${Tags}")
                     $postArray.("page"+($i + (1-$startPage))) = Invoke-Expression "`$CurrentPage.$($ssconfig.post_loc)"
                     Write-Host $("Added page " + $($i + (1-$startPage)) + "/" + ($pages + (1-$startPage)) + " to array.")
-                }
+                }#>
                 $arrayFull = $true
             }finally{
                 $postArray
                 if(!$arrayFull){
-                    Write-Host "The command did not complete successfully. To see`npartial results, run '`$postArray', or if you want complete results, please re-run the command."
+                    Write-Host "The command did not complete successfully. If you want complete results, please re-run the command." #To see`npartial results, run '`$postArray', or
                 }
                 exit
             }
         }
+        
+        $posts = Get-TaggedPosts -tags $tags -count $Limit
 
-        try{
-            $didComplete = $false
-            
-            for( $i=$startPage; $i -le $pages; $i++){
-                $CurrentPage = Get-PageData -Url $(($ssconfig).url + ($ssconfig).page + "=$i&" + ($ssconfig).tags + "=${Tags}")
-                if($md5){
-                    ForEach-Object -InputObject $CurrentPage.posts.post {$imageLinks += $_.md5}
-                } else {
-                    ForEach-Object -InputObject $CurrentPage.posts.post {$imageLinks += $_.file_url}
-                }
-                Write-Host $("Read page " + $($i + (1-$startPage)) + "/" + ($pages + (1-$startPage)) + ".")
-            }
-            $output = ForEach-Object -InputObject $imageLinks {$_ -replace " ","`n"}
-            $didComplete = $true
-        } finally{
-            if(!$didComplete){
-                if( $ToClipBoard ){
-                    Set-Clipboard -Value ($imageLinks -join "`n")
-                } else {
-                    Write-Host ($imageLinks -join "`n")
-                }
-            }
+        if($md5){
+            $output = $posts.md5
+        } else {
+            $output = $posts.file
         }
     }
-}
+
 
 if( $ToClipBoard ){
     Set-Clipboard -Value $output
