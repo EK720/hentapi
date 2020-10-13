@@ -1,8 +1,12 @@
 {
     "MyImouto":  {
                      "getCount":  "function Get-Count{
-						param([String]$tags,[switch]$pages)
+						param([String]$tags,[switch]$pages,[int]$limit=-1)
 						$page = [xml](Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\")
+						if($limit -gt 0 -and $page.posts.count -gt $limit){
+							if($pages){return [Math]::ceiling($limit/100)}
+							return $limit
+						}
 						if($pages){return [Math]::ceiling($page.posts.count/100)}
 						return $page.posts.count
 						}",
@@ -31,9 +35,14 @@
 						}
 						}",
                      "getTaggedPosts":  "function Get-TaggedPosts{
-						param([String]$tags,[switch]$raw,[int]$count=-1)
+						param([String]$tags,[switch]$raw,[int]$limit=-1)
+						if($limit -eq 0){return @()}
 						$postArray = @()
-						$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=1\u0026limit=100\")
+						if($limit -lt 100 -and $limit -gt 0){
+							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=1\u0026limit=$limit\")
+						}else{
+							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=1\u0026limit=100\")
+						}
 						try{
 							$currentPage = [xml]$currentPage
 						} catch [System.Management.Automation.RuntimeException] {
@@ -43,7 +52,6 @@
 						$counter=0
 						for ($i=2;$i -le [Math]::ceiling($currentPage.posts.count/100)+1;$i++){
 						  forEach($post in $currentPage.posts.post){
-							if($counter -eq $count){return $postArray}
 							$creationTime = $timeOrigin.addSeconds($post.created_at)
 							if($raw){
 								$postArray += $post
@@ -51,6 +59,7 @@
 								$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=$post.tags;rating=$post.rating}
 							}
 							$counter++
+							if($counter -eq $limit){return $postArray}
 						  }
 						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=$i\u0026limit=100\")
 						  try{
@@ -58,7 +67,11 @@
 						  } catch [System.Management.Automation.RuntimeException] {
 						  	$currentPage = [xml][System.Net.WebUtility]::HtmlDecode($currentPage)
 						  }
-						  Write-Host $('Read page ' + $($i-1) + '/' + [Math]::ceiling($currentPage.posts.count/100) + '.')
+						  if($limit -gt 0){
+							Write-Host $('Read page ' + $($i-1) + '/' + [Math]::ceiling($limit/100) + '.')
+						  }else{
+							Write-Host $('Read page ' + $($i-1) + '/' + [Math]::ceiling($currentPage.posts.count/100) + '.')
+						  }
 						}
 						return $postArray
 						}"
@@ -66,8 +79,12 @@
 				 
 	"Gelbooru": {
                      "getCount":  "function Get-Count{
-						param([String]$tags,[switch]$pages)
+						param([String]$tags,[switch]$pages,[int]$limit=-1)
 						$page = [xml](Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\")
+						if($limit -gt 0 -and $page.posts.count -gt $limit){
+							if($pages){return [Math]::ceiling($limit/100)}
+							return $limit
+						}
 						if($pages){return [Math]::ceiling($page.posts.count/100)}
 						return $page.posts.count
 						}",
@@ -91,9 +108,14 @@
 						}
 						}",
                      "getTaggedPosts":  "function Get-TaggedPosts{
-						param([String]$tags,[switch]$raw,[int]$count=-1)
+						param([String]$tags,[switch]$raw,[int]$limit=-1)
+						if($limit -eq 0){return @()}
 						$postArray = @()
-						$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=0\u0026limit=100\")
+						if($limit -lt 100 -and $limit -gt 0){
+							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=0\u0026limit=$limit\")
+						}else{
+							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=0\u0026limit=100\")
+						}
 						try{
 							$currentPage = [xml]$currentPage
 						} catch [System.Management.Automation.RuntimeException] {
@@ -102,7 +124,6 @@
 						$counter=0
 						for ($i=1;$i -le [Math]::ceiling($currentPage.posts.count/100);$i++){
 						  forEach($post in $currentPage.posts.post){
-							if($counter -eq $count){return $postArray}
 							$creationTime = [dateTime]::ParseExact($post.created_at,'ddd MMM dd HH:mm:ss zzz yyyy',$null)
 							if($raw){
 								$postArray += $post
@@ -110,6 +131,7 @@
 								$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=$post.tags;rating=$post.rating}
 							}
 							$counter++
+							if($counter -eq $limit){return $postArray}
 						  }
 						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=$i\u0026limit=100\")
 						  try{
@@ -117,16 +139,23 @@
 						  } catch [System.Management.Automation.RuntimeException] {
 						  	$currentPage = [xml][System.Net.WebUtility]::HtmlDecode($currentPage)
 						  }
-						  Write-Host $('Read page ' + $i + '/' + [Math]::ceiling($currentPage.posts.count/100) + '.')
+						  if($limit -gt 0){
+							Write-Host $('Read page ' + $i + '/' + [Math]::ceiling($limit/100) + '.')
+						  }else{
+							Write-Host $('Read page ' + $i + '/' + [Math]::ceiling($currentPage.posts.count/100) + '.')
+						  }
 						}
 						return $postArray
 						}"
                  },
-				 
 	"Shimmie":  {
                      "getCount":  "function Get-Count{
-						param([String]$tags,[switch]$pages)
+						param([String]$tags,[switch]$pages,[int]$limit=-1)
 						$page = [xml](Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?limit=70\u0026tags=$tags\")
+						if($limit -gt 0 -and $page.posts.count -gt $limit){
+							if($pages){return [Math]::ceiling($limit/70)}
+							return $limit
+						}
 						if($pages){return [Math]::ceiling($page.posts.count/70)}
 						return $page.posts.count
 						}",
@@ -146,53 +175,86 @@
 							return $currentPage.posts.post
 						}else{
 							$post = $currentPage.posts.post
+							if($post.file_url.startsWith('/')){
+								$post.file_url = $ssconfig.url+$post.file_url
+							}
 							return @{id=$post.id;file=$post.file_url;uploaded=[dateTime]::ParseExact($post.date.split('.')[0],'yyyy-MM-dd HH:mm:ss',$null);md5=$post.md5;tags=$post.tags;rating=$post.rating}
 						}
 						}",
                      "getTaggedPosts":  "function Get-TaggedPosts{
-						param([String]$tags,[switch]$raw,[int]$count=-1)
+						param([String]$tags,[switch]$raw,[int]$limit=-1)
+						if($limit -eq 0){return @()}
 						$postArray = @()
-						$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=1\u0026limit=70\")
+						if($limit -lt 70 -and $limit -gt 0){
+							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=1\u0026limit=$limit\")
+						}else{
+							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=1\u0026limit=70\")
+						}
+						
 						try{
 							$currentPage = [xml]$currentPage
 						} catch [System.Management.Automation.RuntimeException] {
 							$currentPage = [xml][System.Net.WebUtility]::HtmlDecode($currentPage)
 						}
 						$counter=0
-						for ($i=2;$i -le [Math]::ceiling($currentPage.posts.count/70);$i++){
+						
+						for ($i=1;$i -le [Math]::ceiling($currentPage.posts.count/70);$i++){
 						  forEach($post in $currentPage.posts.post){
-							if($counter -eq $count){return $postArray}
 							$creationTime = [dateTime]::ParseExact($post.date.split('.')[0],'yyyy-MM-dd HH:mm:ss',$null)
 							if($raw){
 								$postArray += $post
 							}else{
+								if($post.file_url.startsWith('/')){
+									$post.file_url = $ssconfig.url+$post.file_url
+								}
 								$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=$post.tags;rating=$post.rating}
 							}
 							$counter++
+							if($counter -eq $limit){return $postArray}
 						  }
-						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=$i\u0026limit=70\")
+						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=$($i+1)\u0026limit=70\")
 						  try{
 							$currentPage = [xml]$currentPage
 						  } catch [System.Management.Automation.RuntimeException] {
 						  	$currentPage = [xml][System.Net.WebUtility]::HtmlDecode($currentPage)
 						  }
-						  Write-Host $('Read page ' + $i-1 + '/' + [Math]::ceiling($currentPage.posts.count/70) + '.')
+						  
+						  if($limit -gt 0){
+							Write-Host $('Read page ' + $i + '/' + [Math]::ceiling($limit/70) + '.')
+						  }else{
+							Write-Host $('Read page ' + $i + '/' + [Math]::ceiling($currentPage.posts.count/70) + '.')
+						  }
 						}
 						return $postArray
 						}"
                  },
 	"e621":  {
                      "getCount":  "function Get-Count{
-						param([String]$tags,[switch]$pages)
-						$page = (Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=1\"|ConvertFrom-JSON)
-						$count = 0
-						$pNum = 1
-						while(($page.success -ne $false) -and $page.posts[0] -ne $null){
-							$count += $page.posts.length
-							$pNum++
-							$page = (Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=$pNum\"|ConvertFrom-JSON)
+						param([String]$tags,[switch]$pages,[int]$limit=-1)
+						if(!$tags.contains(' ')){
+							$page = (Invoke-WebRequest -Uri \"$($ssconfig.url)/tag_aliases.json?search[name_matches]=$tags\"|ConvertFrom-JSON)
+							if($page[0].id -ne $null){
+								$count=$page[0].post_count
+								if($limit -gt 0 -and $count -gt $limit){
+									$count=$limit
+								}
+								if($pages){
+									return [Math]::ceiling($count/320)
+								}
+								return $count
+							}
 						}
-						if($pages){return $pNum-1}
+						$page = (Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\"|ConvertFrom-JSON)
+						$count = 0
+						while($page.posts[0] -ne $null){
+							$count += $page.posts.length
+							$page = (Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=b$($currentPage.posts[-1].id)\"|ConvertFrom-JSON)
+							if($limit -gt 0 -and $count -gt $limit){
+								$count=$limit
+								break
+							}
+						}
+						if($pages){return [Math]::ceiling($count/320)}
 						return $count
 						}",
                      "getPost":  "function Get-Post{
@@ -227,16 +289,19 @@
 						}
 						}",
                      "getTaggedPosts":  "function Get-TaggedPosts{
-						param([String]$tags,[switch]$raw,[int]$count=-1)
-						
+						param([String]$tags,[switch]$raw,[int]$limit=-1)
+						if($limit -eq 0){return @()}
 						$postArray = @()
-						$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=1\"|ConvertFrom-JSON)
+						if($limit -lt 320 -and $limit -gt 0){
+							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
+						}else{
+							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\"|ConvertFrom-JSON)
+						}
 						$counter=0
 						$pageCounter=1
 						
 						while(($currentPage.success -ne $false) -and $currentPage.posts[0] -ne $null){
 						  forEach($post in $currentPage.posts){
-							if($counter -eq $count){return $postArray}
 							$creationTime = [dateTime]::ParseExact($post.created_at,'yyyy-MM-ddTHH:mm:ss.FFFzzzz',$null)
 							if($post.file.url -eq $null){
 								$post.file.url = ('https://static1.e621.net/data/' + $post.file.md5.Substring(0,2) + '/' + $post.file.md5.Substring(2,2) + '/' + $post.file.md5 + '.' + $post.file.ext)
@@ -255,11 +320,83 @@
 								$postArray += @{id=$post.id;file=$post.file.url;uploaded=$creationTime;md5=$post.file.md5;tags=($postTags -join ' ');rating=$post.rating}
 							}
 							$counter++
+							if($counter -eq $limit){return $postArray}
 						  }
 						  Write-Host $(\"Read page $pageCounter.\")
 						  $pageCounter++
-						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=$pageCounter\"|ConvertFrom-JSON)
+						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=b$($currentPage.posts[-1].id)\"|ConvertFrom-JSON)
 						}
+						return $postArray
+						}"
+                 },
+	"Sankaku Complex":  {
+                     "getCount":  "function Get-Count{
+						param([String]$tags,[switch]$pages,[int]$limit=-1)
+						if($limit -eq 0){return @()}
+						$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\"|ConvertFrom-JSON)
+						$count = 0
+						while($page.meta.next -ne $null){
+							$count += 100
+							if($limit -gt 0 -and $count -gt $limit){
+								$count=$limit-$page.data.count
+								break
+							}
+							$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($page.meta.next)\"|ConvertFrom-JSON)
+						}
+						$count += $page.data.count
+						if($pages){return [Math]::ceiling($count/100)}
+						return $count
+						}",
+                     "getPost":  "function Get-Post{
+						param([int]$id,[switch]$raw)
+						$currentPage=(Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?tags=id_range:$id\"|ConvertFrom-JSON)
+						
+						if($currentPage.data.count -eq 0){
+							return $null
+						}
+						
+						$post = $currentPage.data[0]
+						if($post.id -ne $id){
+							Write-Warning 'The post you were looking for could not be found. It was probably deleted.'
+							return $null
+						}
+						
+						if($raw){
+							return $post
+						}else{
+							[dateTime]$timeOrigin = '1970-01-01 00:00:00'
+							return @{id=$post.id;file=$post.file_url;uploaded=$timeOrigin.addSeconds($post.created_at.s);md5=$post.md5;tags=($post.tags.name_en -join ' ');rating=$post.rating}
+						}
+						}",
+                     "getTaggedPosts":  "function Get-TaggedPosts{
+						param([String]$tags,[switch]$raw,[int]$limit=-1)
+						$postArray = @()
+						if($limit -lt 100 -and $limit -gt 0){
+							$currentPage = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
+						}else{
+							$currentPage = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\"|ConvertFrom-JSON)
+						}
+						if($currentPage.meta.next -eq $null -or $limit -eq 0){
+							return @()
+						}
+						$counter=0
+						$pageCounter=1
+						[dateTime]$timeOrigin = '1970-01-01 00:00:00'
+						do{
+						  forEach($post in $currentPage.data){
+							$counter++
+							if($raw){
+								$postArray += $post
+							}else{
+								$creationTime = $timeOrigin.addSeconds($post.created_at.s)
+								$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=($post.tags.name_en -join ' ');rating=$post.rating}
+							}
+							if($counter -eq $limit){return $postArray}
+						  }
+						  Write-Host $(\"Read page $pageCounter.\")
+						  $pageCounter++
+						  $currentPage=(Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($currentPage.meta.next)\"|ConvertFrom-JSON)
+						}while($currentPage.meta.next -eq $null)
 						return $postArray
 						}"
                  }
