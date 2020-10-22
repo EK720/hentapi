@@ -176,7 +176,7 @@
 						}else{
 							$post = $currentPage.posts.post
 							if($post.file_url.startsWith('/')){
-								$post.file_url = $ssconfig.url+$post.file_url
+								$post.file_url = 'http://'+$ssconfig.url+$post.file_url
 							}
 							return @{id=$post.id;file=$post.file_url;uploaded=[dateTime]::ParseExact($post.date.split('.')[0],'yyyy-MM-dd HH:mm:ss',$null);md5=$post.md5;tags=$post.tags;rating=$post.rating}
 						}
@@ -205,7 +205,7 @@
 								$postArray += $post
 							}else{
 								if($post.file_url.startsWith('/')){
-									$post.file_url = $ssconfig.url+$post.file_url
+									$post.file_url = 'http://'+$ssconfig.url+$post.file_url
 								}
 								$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=$post.tags;rating=$post.rating}
 							}
@@ -333,17 +333,41 @@
                      "getCount":  "function Get-Count{
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
 						if($limit -eq 0){return @()}
-						$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\"|ConvertFrom-JSON)
-						$count = 0
-						while($page.meta.next -ne $null){
-							$count += 100
-							if($limit -gt 0 -and $count -gt $limit){
-								$count=$limit-$page.data.count
-								break
-							}
-							$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($page.meta.next)\"|ConvertFrom-JSON)
+						if($tags -eq ' '){
+							$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=1\u0026tags=\"|ConvertFrom-JSON)
+							$count = $page.data[0].id
+							if($pages){return [Math]::ceiling($count/100)}
+							return $count
 						}
-						$count += $page.data.count
+						if($tags.length -eq 1 -or !$tags.substring(1,$tags.length-2).contains(\" \")){
+							$tags = $tags.replace(' ','')
+							$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/tags/?name=$tags\u0026limit=5\"|ConvertFrom-JSON)
+							if($page.count -eq 0){
+								return 0
+							}
+							if($page[0].name_en -eq $tags){
+								if($limit -gt 0 -and $page[0].count -gt $limit){
+									$count=$limit
+								}else{
+									$count=$page[0].count
+								}
+							}else{
+								#possibly substitute incomplete tag for complete one thru create-menu?
+								return 0
+							}
+						}else{
+							$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\"|ConvertFrom-JSON)
+							$count = 0
+							while($page.meta.next -ne $null){
+								$count += 100
+								if($limit -gt 0 -and $count -gt $limit){
+									$count=$limit-$page.data.count
+									break
+								}
+								$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($page.meta.next)\"|ConvertFrom-JSON)
+							}
+							$count += $page.data.count
+						}
 						if($pages){return [Math]::ceiling($count/100)}
 						return $count
 						}",
