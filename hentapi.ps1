@@ -84,7 +84,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2020-10-20
+    Last Edit: 2020-11-17
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -113,6 +113,7 @@
     Version 2.8 - Added a way to remove servers from your configuration. Just use the -Remove option with the server you want to delete.
     Version 2.81- Made the program work better on other operating systems.
     Version 2.9 - Made -Count and -Update more efficient and user-friendly.
+    Version 2.92- Made the program more efficient and less buggy.
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -575,11 +576,12 @@ if($Update){
         Write-Host ("Updating collections in folder `""+(get-item $UpdatePath).name+"`"..")
         forEach($qFile in $qFiles){
             $out=$updatePath+$qFile.substring(0,$qFile.length-7)
+            $ext=""
             
-            if($Array){$out += " -Array"}
-            if($Count){$out += " -Count"}
+            if($Array){$ext += " -Array"}
+            if($Count){$ext += " -Count"}
             
-            Invoke-Expression ($MyInvocation.InvocationName+" -Update `""+$out+"`"")
+            Invoke-Expression ($MyInvocation.InvocationName+" -Update `""+$out+"`""+$ext)
         }
         exit
     }
@@ -611,7 +613,9 @@ if($Update){
             }
 
             if($array){
-                $queries += $baseExpression+" -Download -Limit $diff`n"
+                $queries += $baseExpression+" -Download"
+                if($diff -gt 0){$queries += " -Limit $diff"}
+                $queries += "`n"
                 continue
             }
         
@@ -621,15 +625,15 @@ if($Update){
             ToBase64 $queryJSON >> "tempQueries"
 
             if($diff -eq 0){
-                Write-Output ("Found no new posts on server `""+$query.server+"`".")
+                Write-Host ("Found no new posts on server `""+$query.server+"`".")
                 continue
             } elseif($diff -eq 1) {
-                Write-Output ("Found 1 new post on server `""+$query.server+"`". Updating...")
+                Write-Host ("Found 1 new post on server `""+$query.server+"`". Updating...")
             } elseif($diff -lt 0) {
-                Write-Output ("Found a negative difference on server `""+$query.server+"`". Skipping...")
+                Write-Host ("Found a negative difference on server `""+$query.server+"`". Skipping...")
                 continue
             } else {
-                Write-Output ("Found $diff new posts on server `""+$query.server+"`". Updating...")
+                Write-Host ("Found $diff new posts on server `""+$query.server+"`". Updating...")
             }
 
             ToBase64 "http://www.ostracodfiles.com/dots/main.html" > update
@@ -643,10 +647,10 @@ if($Update){
         Write-Host ("Collection `""+$UpdatePath.split('\')[-2]+"`" successfully updated.")
 
     }catch{
-        throw $_
+        Write-Host $_
         exit
     }finally{
-        if(Test-Path "queries" -and Test-Path "tempQueries"){
+        if((Test-Path "queries") -and (Test-Path "tempQueries")){
             del "queries"
             ren "tempQueries" "queries"
         }
@@ -918,7 +922,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
     if($Count){
         Get-Count -tags $Tags -limit $limit
-        exit
+        return
     }
 
     $postData = GetTaggedPosts -tags $tags -limit $Limit
@@ -1014,7 +1018,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
     } else {
         [String[]]$imageLinks = @()
         $updateMode = Test-Path $DLPath"update"
-        $pages = Get-Count -tags $tags -Pages -limit $Limit
+        $pages = [Math]::ceiling($postCount/(Get-Count -tags $tags -Pages))
 
         if($Download){
             Get-EventSubscriber -Force | Unregister-Event -Force
@@ -1037,7 +1041,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
             }
 
             for($i=0;$i -lt $postData.Length;$i++){
-                $pageNum = [Math]::ceiling(($i+1*$pages)/$postCount)
+                $pageNum = [Math]::ceiling(($i+1)*$pages/$postCount)
                 if($updateMode){
                     Write-Progress -Activity ("Updating collection in `"$DLPath`"") -Id 0 -Status ("Server: " + $ssconfig.url) -PercentComplete ([Math]::ceiling($i*100/$postData.Length)) -CurrentOperation ("Downloading post #$($i+1)" )
                 }else{
@@ -1148,16 +1152,16 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
             }else{
                 Write-Host ("Downloaded page $pageNum.")
             }
-        }
-        $query = @{}
-        $query.server = $Server
-        $query.tags = $Tags
-        $query.count = $postCount
-        $query.md5 = if($MD5){$true}else{$false}
-        $queryString = ConvertTo-JSON $query -Compress
-        ToBase64 $queryString >> ($DLPath + "queries")
 
-        return
+            $query = @{}
+            $query.server = $Server
+            $query.tags = $Tags
+            $query.count = $postCount
+            $query.md5 = if($MD5){$true}else{$false}
+            $queryString = ConvertTo-JSON $query -Compress
+            ToBase64 $queryString >> ($DLPath + "queries")
+            return
+        }
     }
         
         
