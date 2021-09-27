@@ -14,24 +14,42 @@
 						}",
                      "getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
+						$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=id:$id\")
 						try{
-							$postPage = Invoke-WebRequest -Uri \"$($ssconfig.url)/post/show/$id\"
-						}catch{
-							Write-Host \"The site couldn't be read. You've probably been temporarily blocked for too many queries.`nIf you are sure that this isn't the case, please submit a bug report on this program's Github repo.\"
+							$currentPage = [xml]$currentPage
+						} catch [System.Management.Automation.RuntimeException] {
+							$currentPage = [xml][System.Net.WebUtility]::HtmlDecode($currentPage)
+						}
+						if($currentPage.posts.post -eq $null){
 							return $null
 						}
-						$tags=($postPage.images|where id -eq \"image\").alt.split(\" \")[0..4] -join \" \"
-						$taggedPosts = [xml](Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\")
-						if($taggedPosts.posts.post -eq $null){
-							return $null
-						}
-						forEach($post in $taggedPosts.posts.post) {
+						
+						forEach($post in $currentPage.posts.post) {
 							if($post.id -eq $id){
 								if($raw){
 									return $post
 								}else{
 									[dateTime]$timeOrigin = '1970-01-01 00:00:00'
-									return @{id=$post.id;file=$post.file_url;uploaded=$timeOrigin.addSeconds($post.created_at);md5=$post.md5;tags=$post.tags;rating=$post.rating}
+									if($post.file_url -ne $null){
+										return @{id=$post.id;file=$post.file_url;uploaded=$timeOrigin.addSeconds($post.created_at);md5=$post.md5;tags=$post.tags;rating=$post.rating}
+									}
+									forEach($ext in ('.png','.jpg','.gif','.mp4','.webp','.webm')){
+										$HTTP_Request = [System.Net.WebRequest]::Create(\"https://$($ssconfig.url)/image/$($post.md5)${ext}\")
+										$HTTP_Request.Method='HEAD'
+										try{
+											$HTTP_Response = $HTTP_Request.GetResponse()
+										}catch{
+											continue
+										}
+										$HTTP_Status = [int]$HTTP_Response.StatusCode
+										if($HTTP_Status -eq 200){
+											$HTTP_Response.Close()
+											$url = \"https://$($ssconfig.url)/image/$($post.md5)${ext}\"
+											return @{id=$post.id;file=$url;uploaded=$timeOrigin.addSeconds($post.created_at);md5=$post.md5;tags=$post.tags;rating=$post.rating}
+										}
+										$HTTP_Response.Close()
+									}
+									return $null
 								}
 							}
 						}
@@ -400,6 +418,9 @@
 						[dateTime]$timeOrigin = '1970-01-01 00:00:00'
 						do{
 						  forEach($post in $currentPage.data){
+							if($post.file_url -eq $null -and !$raw){
+								continue
+							}
 							$counter++
 							if($raw){
 								$postArray += $post
@@ -412,7 +433,7 @@
 						  Write-Host \"Read page $pageCounter.\"
 						  $pageCounter++
 						  $currentPage=(Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($currentPage.meta.next)\"|ConvertFrom-JSON)
-						}while($currentPage.meta.next -ne $null)
+						}while($currentPage.meta.prev -ne $null)
 						return $postArray
 						}"
                  }

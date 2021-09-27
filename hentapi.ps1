@@ -84,7 +84,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2020-11-17
+    Last Edit: 2021-04-26
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -114,6 +114,7 @@
     Version 2.81- Made the program work better on other operating systems.
     Version 2.9 - Made -Count and -Update more efficient and user-friendly.
     Version 2.92- Made the program more efficient and less buggy.
+    Version 2.94- Fixed a small bug involving video files not being tagged correctly.
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -237,10 +238,6 @@ function Add-Metadata {
                 ffmpeg -i $Path "$PathDir$name.mp4" -hide_banner -loglevel panic > $null
                 del $Path
                 $Path = "$PathDir$name.mp4"
-                #I got mp4tags after some pretty heavy internet digging. I don't know where it is now, but you can probably check archive.org. I'm sorry.
-                #Note: The file libmp4v2.dll needs to be in the same directory as mp4tags, otherwise it won't work.
-                #And this program works just fine without it, anyway. (i think)
-                mp4tags -g ($tagsList -join "; ") $Path
                 exiftool -Artist="${Server}" $Path -overwrite_original -q -ignoreMinorErrors
                 $ext="mp4"
             }
@@ -290,6 +287,11 @@ function Add-Metadata {
         }#>
         
         Write-Progress -Activity "Editing file" -Status "Writing metadata (tags/author/date)" -PercentComplete 75 -Id 1 -ParentId 0
+        if($ext -eq "mp4"){
+            ffmpeg -i $Path -metadata genre="${metaTags}" -c copy "${PathDir}tmp_$name.mp4" -hide_banner -loglevel panic > $null
+            Remove-Item $Path
+            Rename-Item "${PathDir}tmp_$name.mp4" $Path
+        }
         exiftool -Artist="${Server}" -XPKeywords="${metaTags}" -Rating="${rating}" $Path -overwrite_original -q -ignoreMinorErrors
         (get-item $Path).CreationTime = $Post.uploaded
     }
@@ -303,9 +305,10 @@ function Add-Metadata {
 function HashCheck {
     param([string]$Path, $Post, [int]$Count=1)
     
+    $maxTries=15
     Write-Progress -Activity "Checking file hash.." -PercentComplete 0 -ParentId 0 -Id 1
 
-    if($Count -gt 30){
+    if($Count -gt $maxTries){
         Write-Warning ("Gave up on file `"${Path}`" after " + ($Count-1) + " attempts.")
         return
     }
@@ -330,7 +333,7 @@ function HashCheck {
         return
     }else{
         $hash = (get-fileHash $Path -algorithm MD5).hash
-        Write-Progress -Activity "Checking file hash.." -Status "Hashing file" -PercentComplete 50 -ParentId 0 -Id 1
+        Write-Progress -Activity "Checking file hash.." -Status "Hashing file (Attempt $Count of $maxTries)" -PercentComplete 50 -ParentId 0 -Id 1
     }
     
     if($hash -eq $Post.md5){
