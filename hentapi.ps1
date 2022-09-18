@@ -84,7 +84,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2021-04-26
+    Last Edit: 2022-08-23
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -115,6 +115,7 @@
     Version 2.9 - Made -Count and -Update more efficient and user-friendly.
     Version 2.92- Made the program more efficient and less buggy.
     Version 2.94- Fixed a small bug involving video files not being tagged correctly.
+    Version 2.96- Over a year since last update... Anyway, I fixed a bug that resulted in query files for a collection being fucked up if the update errored while working on that collection.
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -256,17 +257,17 @@ function Add-Metadata {
             return
         }
 
-        if($Post.rating -eq "s" -or $Post.rating -eq "safe"){
+        if($Post.rating -match "^s" -or $Post.rating -ieq "safe"){
             $rating=1
-        }elseif($Post.rating -eq "q" -or $Post.rating -eq "questionable"){
+        }elseif($Post.rating -match "^q" -or $Post.rating -ieq "questionable"){
             $rating=2
-        }elseif($Post.rating -eq "e" -or $Post.rating -eq "explicit"){
+        }elseif($Post.rating -match "^e" -or $Post.rating -ieq "explicit"){
             $rating=3
         }else{
             $rating=0
         }
 
-        <#$time = $Post.created_at
+        $time = $Post.created_at
         if($time -eq $null){
             $time = $Post.uploaded
         }
@@ -284,7 +285,7 @@ function Add-Metadata {
             Write-Verbose "The time format was wrong. This could be caused by a lot of things, but I'd have to take a look at it to figure it out. Oops!"
             Write-Verbose "Here's the error:`n"$_
             $creationTime = Get-Date
-        }#>
+        }
         
         Write-Progress -Activity "Editing file" -Status "Writing metadata (tags/author/date)" -PercentComplete 75 -Id 1 -ParentId 0
         if($ext -eq "mp4"){
@@ -649,14 +650,16 @@ if($Update){
         
         Write-Host ("Collection `""+$UpdatePath.split('\')[-2]+"`" successfully updated.")
 
-    }catch{
-        Write-Host $_
-        exit
-    }finally{
         if((Test-Path "queries") -and (Test-Path "tempQueries")){
             del "queries"
             ren "tempQueries" "queries"
         }
+    }catch{
+        Write-Host $_
+        if(Test-Path "tempQueries"){
+            del "tempQueries"
+        }
+    }finally{
         if(Test-Path "update"){
             del "update"
         }

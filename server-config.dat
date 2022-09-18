@@ -114,7 +114,27 @@
 							$currentPage = [xml][System.Net.WebUtility]::HtmlDecode($currentPage)
 						}
 						if($currentPage.posts.post -eq $null){
-							return $null
+							$currentPage = (Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=post\u0026s=view\u0026id=$id\" -UseBasicParsing)
+							if($currentPage.content -notmatch 'Original image'){
+							 return $null
+							}
+							$parser = New-Object -ComObject 'HTMLFile'
+							$parser.IHTMLDocument2_write($currentPage.Content)
+							if($raw){
+							 return $currentPage.rawContent
+							}else{
+							 $info = $parser.getElementById('tag-list')
+							 $file = $($info.getElementsbyTagName('A'))|?{$_.innerText -match 'Original image'}|%{$_.href}
+							 $file -match '\\/([^.]{32})\\.'>$null
+							 $md5 = $matches.1
+							 $tags = ($info.getElementsByTagName('LI')|?{$_.className -match 'tag.+'}|%{$_.innerText.trim() -replace '\\? | \\d+$','' -replace ' ','_'}) -join ' '
+							 $info.innerText -match 'Posted: ([^\\r\\n]+)'>$null
+							 $date = [datetime]::Parse($matches.1)
+							 $info.innerText -match 'Rating: ([^\\r\\n]+)'>$null
+							 $rating = ($matches.1).toLower()
+
+							 return @{id=$id;file=$file;uploaded=$date;md5=$md5;tags=$tags;rating=$rating}
+							}
 						}
 						
 						if($raw){
@@ -162,6 +182,103 @@
 							Write-Host $('Read page ' + $i + '/' + [Math]::ceiling($currentPage.posts.count/100) + '.')
 						  }
 						}
+						return $postArray
+						}"
+                 },
+	"Danbooru": {
+                     "getCount":  "function Get-Count{
+						param([String]$tags,[switch]$pages,[int]$limit=-1)
+						if($pages){return 200}
+						if($limit -eq 0){return 0}
+						if($tags -eq ' '){
+							$page = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=1\"|ConvertFrom-JSON)
+							return $page[0].id
+						}
+						if($tags.length -eq 1 -or !$tags.substring(1,$tags.length-2).contains(\" \")){
+							$tags = $tags.replace(' ','')
+							$page = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/tags.json?search[name_like]=$tags\u0026limit=5\"|ConvertFrom-JSON)
+							if($page.count -eq 0){
+								return 0
+							}
+							if($page[0].name -eq $tags){
+								if($limit -gt 0 -and $page[0].post_count -gt $limit){
+									$count=$limit
+								}else{
+									$count=$page[0].post_count
+								}
+							}else{
+								#possibly substitute incomplete tag for complete one thru create-menu?
+								return 0
+							}
+						}else{
+							$page = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\"|ConvertFrom-JSON)
+							$count = 0
+							$pageCounter = 2
+							while($page[0] -ne $null){
+								$count += $page.length
+								$page = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\u0026page=$pageCounter\"|ConvertFrom-JSON)
+								if($limit -gt 0 -and $count -gt $limit){
+									$count=$limit
+									break
+								}
+								$pageCounter++
+							}
+						}
+						return $count
+						}",
+                     "getPost":  "function Get-Post{
+						param([int]$id,[switch]$raw)
+						try{
+							$currentPage=(Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts/$id.json\"|ConvertFrom-JSON)
+						}catch{
+							Write-Error $Error[0].Exception.Message
+							return $null
+						}
+						
+						$post = $currentPage[0]
+						if($post.id -ne $id){
+							Write-Warning 'The post you were looking for could not be found. It was probably deleted.'
+							return $null
+						}
+						
+						if($raw){
+							return $post
+						}else{
+							$date=[dateTime]::Parse($post.created_at)
+							return @{id=$post.id;file=$post.file_url;uploaded=$date;md5=$post.md5;tags=($post.tag_string);rating=$post.rating}
+						}
+						}",
+                     "getTaggedPosts":  "function Get-TaggedPosts{
+						param([String]$tags,[switch]$raw,[int]$limit=-1)
+						$postArray = @()
+						if($limit -lt 200 -and $limit -gt 0){
+							$currentPage = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
+						}else{
+							$currentPage = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\"|ConvertFrom-JSON)
+						}
+						if($currentPage[0] -eq $null -or $limit -eq 0){
+							return @()
+						}
+						$counter=0
+						$pageCounter=1
+						do{
+						  forEach($post in $currentPage){
+							if($post.file_url -eq $null -and !$raw){
+								continue
+							}
+							$counter++
+							if($raw){
+								$postArray += $post
+							}else{
+								$creationTime = $date=[dateTime]::Parse($post.created_at)
+								$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=($post.tag_string);rating=$post.rating}
+							}
+							if($counter -eq $limit){return $postArray}
+						  }
+						  Write-Host \"Read page $pageCounter.\"
+						  $pageCounter++
+						  $currentPage=(Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\u0026page=$pageCounter\"|ConvertFrom-JSON)
+						}while($currentPage[0] -ne $null)
 						return $postArray
 						}"
                  },
@@ -345,7 +462,7 @@
                      "getCount":  "function Get-Count{
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
 						if($pages){return 100}
-						if($limit -eq 0){return @()}
+						if($limit -eq 0){return 0}
 						if($tags -eq ' '){
 							$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=1\u0026tags=\"|ConvertFrom-JSON)
 							return $page.data[0].id
@@ -436,5 +553,85 @@
 						}while($currentPage.meta.prev -ne $null)
 						return $postArray
 						}"
+                 },
+	"Idol Complex":  {
+                     "getCount":  "function Get-Count{
+						param([String]$tags,[switch]$pages,[int]$limit=-1)
+						if($pages){return 60}
+						if($limit -eq 0){return 0}
+						if($tags -eq ' '){
+							$page = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=\u0026limit=1\"|ConvertFrom-JSON)
+							return $page[0].id
+						}
+						$page = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=60\"|ConvertFrom-JSON)
+						$count= 0
+						while($page.length -gt 0){
+							$count += $page.length
+							if($limit -gt 0 -and $count -gt $limit){
+								$count = $limit
+								break
+							}
+							$page = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=60\u0026next=$($page[-1].id-1)\"|ConvertFrom-JSON)
+						}
+						return $count
+						}",
+                     "getPost":  "function Get-Post{
+						param([int]$id,[switch]$raw)
+						$currentPage=(Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?next=$id\u0026limit=1\"|ConvertFrom-JSON)
+
+						if($currentPage.length -eq 0){
+							Write-Warning 'The post you were looking for could not be found. It was probably deleted.'
+							return $null
+						}
+						
+						$post = $currentPage[0]
+						if($post.id -ne $id){
+							Write-Warning 'The post you were looking for could not be found. It was probably deleted.'
+							return $null
+						}
+						
+						if($raw){
+							return $post
+						}else{
+							[dateTime]$timeOrigin = '1970-01-01 00:00:00'
+							return @{id=$post.id;file=$post.file_url;uploaded=$timeOrigin.addSeconds($post.created_at.s);md5=$post.md5;tags=($post.tags.name -join ' ');rating=$post.rating}
+						}
+						}",
+                     "getTaggedPosts":  "function Get-TaggedPosts{
+						param([String]$tags,[switch]$raw,[int]$limit=-1)
+						$postArray = @()
+						if($limit -lt 60 -and $limit -gt 0){
+							$currentPage = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
+						}else{
+							$currentPage = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=60\u0026tags=$tags\"|ConvertFrom-JSON)
+						}
+						if($currentPage.length -eq 0 -or $limit -eq 0){
+							return @()
+						}
+						$counter=0
+						$pageCounter=1
+						[dateTime]$timeOrigin = '1970-01-01 00:00:00'
+						$prevID=$currentPage[0].id
+						do{
+							forEach($post in $currentPage){
+								if($post.file_url -eq $null -and !$raw){
+									continue
+								}
+							$counter++
+							if($raw){
+								$postArray += $post
+							}else{
+								$creationTime = $timeOrigin.addSeconds($post.created_at.s)
+								$postArray += @{id=$post.id;file=('https:'+$post.file_url);uploaded=$creationTime;md5=$post.md5;tags=($post.tags.name -join ' ');rating=$post.rating}
+							}
+							if($counter -eq $limit){return $postArray}
+							}
+							Write-Host \"Read page $pageCounter.\"
+							$pageCounter++
+							$prevID=$currentPage[-1].id-1
+							$currentPage=(Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=60\u0026tags=$tags\u0026next=$prevID\"|ConvertFrom-JSON)
+						}while($currentPage.length -ne 0)
+							return $postArray
+					}"
                  }
 }
