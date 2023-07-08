@@ -84,7 +84,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2022-08-23
+    Last Edit: 2023-07-08
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -116,6 +116,7 @@
     Version 2.92- Made the program more efficient and less buggy.
     Version 2.94- Fixed a small bug involving video files not being tagged correctly.
     Version 2.96- Over a year since last update... Anyway, I fixed a bug that resulted in query files for a collection being fucked up if the update errored while working on that collection.
+    Version 2.98- Changed the update system to be resumable (e.g no files are fucked up if a crash occurs mid-update). Large overhaul of update system.
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -561,6 +562,15 @@ if($ListServers){
 }
 
 if($Update){
+
+    #reads query file
+    #if queries file exists, pull queries file to variable (qvar)
+    #load temp file into array/if file not exist create array
+    #creates hashtable of arrays like: #{done=@();notDone=@()}
+    #add qvar to "not done" sec of array
+    #forEach element in notDone,decode,process query,add encoded processed query string to done,remove 1st element of notDone,write to updateCheckpoint file
+    #once all done, combine on newlines and append to the current queries file
+    #delete updateCheckpoint
     if(Test-Path $DLPath){
         if((Get-Item $DLPath).Mode -ne "d-----"){
             throw "The update target is not a directory. Please check your path and try again."
@@ -590,43 +600,59 @@ if($Update){
         exit
     }
 
-    if(-not (Test-Path ($UpdatePath + "queries"))){
+    if(-not ((Test-Path ($UpdatePath + "queries")) -or (Test-Path ($UpdatePath + "updateCheckpoint")))){
         throw "The update file does not exist. Please make sure that your file path is valid, and that at least one download operation has been allowed to complete in your target path."
         exit
     }
 
     $query=$null
-    $qData = Get-Content $UpdatePath"queries"
+    
+    if(Test-Path $UpdatePath"updateCheckpoint"){
+        $qArray = ConvertFrom-JSON -InputObject (Get-Content $UpdatePath"updateCheckpoint")
+        if($Array -or $Count){
+            $qArray.done += $qArray.notDone
+            $qArray.notDone = $qArray.done
+        }
+    }else{
+        $qArray = @{done=@();notDone=@()}
+    }
+
+    if(Test-Path $UpdatePath"queries"){
+        $qData = Get-Content $UpdatePath"queries"
+        $qArray.notDone += $qData -split "`n"
+        if(-not ($Array -or $Count)){
+            ConvertTo-Json $qArray -Compress > $UpdatePath"updateCheckpoint"
+            del $UpdatePath"queries"
+        }
+    }
 
     try{
         if($Count){$totalDiff = 0}
         if($Array){$queries=""}
         
-        forEach($encodedQuery in ($qData -split "`n")){
+        forEach($encodedQuery in $qArray.notDone){
             Write-Progress -Activity "Clearing progress bars" -Id 0 -Completed
-            $query = ConvertFrom-Json $(FromBase64 $encodedQuery)
+            $query = ConvertFrom-Json $(FromBase64 $qArray.notDone[0])
             $baseExpression = $MyInvocation.InvocationName+" -server " + $query.server + ' -tags "' + $query.tags + '"'
             $currentCount = Invoke-Expression ($baseExpression + " -count")
             $isMD5 = $query.md5
             $diff = $currentCount-$query.count
             if($isMD5){$baseExpression += " -MD5"}
-            
             if($Count){
                 $totalDiff += $diff
+                $qArray.notDone = $qArray.notDone[1..($qArray.notDone.length)]
                 continue
             }
-
             if($array){
                 $queries += $baseExpression+" -Download"
                 if($diff -gt 0){$queries += " -Limit $diff"}
                 $queries += "`n"
+                $qArray.notDone = $qArray.notDone[1..($qArray.notDone.length)]
                 continue
             }
         
             if(($PWD.Path + "\") -ne $UpdatePath){cd $UpdatePath}
-            $query.count = $currentCount
-            $queryJSON = ConvertTo-JSON $query -Compress
-            ToBase64 $queryJSON >> "tempQueries"
+            $qArray.notDone[0].count = $currentCount
 
             if($diff -eq 0){
                 Write-Host ("Found no new posts on server `""+$query.server+"`".")
@@ -643,17 +669,19 @@ if($Update){
             ToBase64 "http://www.ostracodfiles.com/dots/main.html" > update
             ToBase64 $diff >> update
             Invoke-Expression($baseExpression + " -Download -Limit $diff")
+            $qArray.done += $qArray.notDone[0]
+            $qArray.notDone = $qArray.notDone[1..($qArray.notDone.length)]
+            ConvertTo-Json $qArray -Compress > "updateCheckpoint"
         }
 
         if($Count){$totalDiff;exit}
         if($Array){$queries;exit}
-        
-        Write-Host ("Collection `""+$UpdatePath.split('\')[-2]+"`" successfully updated.")
 
-        if((Test-Path "queries") -and (Test-Path "tempQueries")){
-            del "queries"
-            ren "tempQueries" "queries"
+        $qArray.done -join "`n" > "queries"
+        if(Test-Path "updateCheckpoint"){
+            del "updateCheckpoint"
         }
+        Write-Host ("Collection `""+$UpdatePath.split('\')[-2]+"`" successfully updated.")
     }catch{
         Write-Host $_
         if(Test-Path "tempQueries"){
@@ -666,6 +694,7 @@ if($Update){
         cd $origPath
         exit
     }
+    #end
 }
 
 if($Server -eq "*"){
@@ -702,7 +731,7 @@ if( $settings.$trueName -eq $null ) {
     Write-Host "Server was not found in config file. Commencing manual setup..."
     $settings.$trueName = @{}
 
-    $newUrl = Read-Host "Please enter the url for $server (ex: gelbooru.com)"
+    $newUrl = Read-Host "Please enter the url for $server (ex: https://gelbooru.com)"
     $types = (Get-Content "${ServerConfig}" | ConvertFrom-JSON).psobject.properties.name
     $options = $types + "Other/Automatic"
     $choice = Create-Menu -MenuTitle "Please select server type for `"$server`": (UP/DOWN/ENTER)" -MenuOptions $options
@@ -1112,13 +1141,14 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                         if($array){continue}
                         if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $postData[$i]}
                         Add-Metadata -Path $DLFile -Post $postData[$i] > $null
-                    }elseif($updateMode){
-                        if((Get-MetaData -File ($children | where Name -match "$DLID\.(${badExt})").Name -ExifID 20) -eq $trueName){
-                            Remove-Item $DLPath"update"
-                            return "done"
-                        }else{
-                            Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
-                        }
+                    }else{
+                        <#if($updateMode){
+                            if((Get-MetaData -File ($children | where Name -match "$DLID\.(${badExt})").Name -ExifID 20) -eq $trueName){
+                                Remove-Item $DLPath"update"
+                                return "done"
+                            }
+                        }#>
+                        Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
                     }
                     $postData[$i].md5>>($DLPath+"hashlist")
                 }elseif($updateMode){
