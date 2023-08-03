@@ -562,7 +562,6 @@ if($ListServers){
 }
 
 if($Update){
-
     #reads query file
     #if queries file exists, pull queries file to variable (qvar)
     #load temp file into array/if file not exist create array
@@ -587,6 +586,7 @@ if($Update){
 
     if($Recurse){
         $qFiles = Get-ChildItem $UpdatePath -name queries -Recurse
+        $qFiles += Get-ChildItem $UpdatePath -name updateCheckpoint -Recurse
         Write-Host ("Updating collections in folder `""+(get-item $UpdatePath).name+"`"..")
         forEach($qFile in $qFiles){
             $out=$updatePath+$qFile.substring(0,$qFile.length-7)
@@ -630,7 +630,11 @@ if($Update){
         if($Count){$totalDiff = 0}
         if($Array){$queries=""}
         
-        forEach($encodedQuery in $qArray.notDone){
+        forEach($counter in $qArray.notDone){
+            if($qArray.notDone[0] -match "^\s*$"){
+                $qArray.notDone = $qArray.notDone[1..($qArray.notDone.length)]
+                continue
+            }
             Write-Progress -Activity "Clearing progress bars" -Id 0 -Completed
             $query = ConvertFrom-Json $(FromBase64 $qArray.notDone[0])
             $baseExpression = $MyInvocation.InvocationName+" -server " + $query.server + ' -tags "' + $query.tags + '"'
@@ -652,15 +656,19 @@ if($Update){
             }
         
             if(($PWD.Path + "\") -ne $UpdatePath){cd $UpdatePath}
-            $qArray.notDone[0].count = $currentCount
+            $query.count = $currentCount
 
             if($diff -eq 0){
                 Write-Host ("Found no new posts on server `""+$query.server+"`".")
+                $qArray.done += $qArray.notDone[0]
+                $qArray.notDone = $qArray.notDone[1..($qArray.notDone.length)]
                 continue
             } elseif($diff -eq 1) {
                 Write-Host ("Found 1 new post on server `""+$query.server+"`". Updating...")
             } elseif($diff -lt 0) {
                 Write-Host ("Found a negative difference on server `""+$query.server+"`". Skipping...")
+                $qArray.done += $qArray.notDone[0]
+                $qArray.notDone = $qArray.notDone[1..($qArray.notDone.length)]
                 continue
             } else {
                 Write-Host ("Found $diff new posts on server `""+$query.server+"`". Updating...")
@@ -683,10 +691,8 @@ if($Update){
         }
         Write-Host ("Collection `""+$UpdatePath.split('\')[-2]+"`" successfully updated.")
     }catch{
-        Write-Host $_
-        if(Test-Path "tempQueries"){
-            del "tempQueries"
-        }
+        Write-Error $_
+        Write-Error "There was an error during the update process. See line 693 for more information."
     }finally{
         if(Test-Path "update"){
             del "update"
@@ -1151,7 +1157,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                         Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
                     }
                     $postData[$i].md5>>($DLPath+"hashlist")
-                }elseif($updateMode){
+                <#}elseif($updateMode){
                     $DLExt = $postData[$i].file.split('.')[-1]
                     $DLID = $id[$i]
                     $DLFile = $DLPath + $DLID + "." + $DLExt
@@ -1171,7 +1177,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                         }
                     }else{
                         Write-Verbose ("Skipping download of file `"" + $DLID + "." + $DLExt + "`".")
-                    }
+                    }#>
                 }else{
                     Write-Verbose ("Skipping download of file `"" + $id[$i] + "." + $postData[$i].file.split('\.')[-1] + "`".")
                 }
