@@ -3,7 +3,7 @@
                      "getCount":  "function Get-Count{
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
 						if($pages){return 100}
-						$page = Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\"
+						$page = Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\"
 						try{
 							$page = [xml]$page
 						} catch [System.Management.Automation.RuntimeException] {
@@ -14,7 +14,7 @@
 						}",
                      "getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
-						$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=id:$id\")
+						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/post/index.xml?tags=id:$id\")
 						try{
 							$currentPage = [xml]$currentPage
 						} catch [System.Management.Automation.RuntimeException] {
@@ -59,9 +59,9 @@
 						if($limit -eq 0){return @()}
 						$postArray = @()
 						if($limit -lt 100 -and $limit -gt 0){
-							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=1\u0026limit=$limit\")
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=1\u0026limit=$limit\")
 						}else{
-							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=1\u0026limit=100\")
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=1\u0026limit=100\")
 						}
 						try{
 							$currentPage = [xml]$currentPage
@@ -86,7 +86,7 @@
 						  }else{
 							Write-Host $('Read page ' + $($i-1) + '/' + [Math]::ceiling($currentPage.posts.count/100) + '.')
 						  }
-						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=$i\u0026limit=100\")
+						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/post/index.xml?tags=$tags\u0026page=$i\u0026limit=100\")
 						  try{
 							$currentPage = [xml]$currentPage
 						  } catch [System.Management.Automation.RuntimeException] {
@@ -101,20 +101,20 @@
                      "getCount":  "function Get-Count{
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
 						if($pages){return 100}
-						$page = [xml](Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\")
+						$page = [xml](Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\")
 						if($limit -gt 0 -and $page.posts.count -gt $limit){return $limit}
 						return $page.posts.count
 						}",
                      "getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
-						$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026id=$id\")
+						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026id=$id\")
 						try{
 							$currentPage = [xml]$currentPage
 						} catch [System.Management.Automation.RuntimeException] {
 							$currentPage = [xml][System.Net.WebUtility]::HtmlDecode($currentPage)
 						}
 						if($currentPage.posts.post -eq $null){
-							$currentPage = (Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=post\u0026s=view\u0026id=$id\" -UseBasicParsing)
+							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/index.php?page=post\u0026s=view\u0026id=$id\" -UseBasicParsing)
 							if($currentPage.content -notmatch 'Original image'){
 							 return $null
 							}
@@ -149,9 +149,9 @@
 						if($limit -eq 0){return @()}
 						$postArray = @()
 						if($limit -lt 100 -and $limit -gt 0){
-							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=0\u0026limit=$limit\")
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=0\u0026limit=$limit\")
 						}else{
-							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=0\u0026limit=100\")
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=0\u0026limit=100\")
 						}
 						try{
 							$currentPage = [xml]$currentPage
@@ -170,7 +170,7 @@
 							$counter++
 							if($counter -eq $limit){return $postArray}
 						  }
-						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=$i\u0026limit=100\")
+						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/index.php?page=dapi\u0026s=post\u0026q=index\u0026tags=$tags\u0026pid=$i\u0026limit=100\")
 						  try{
 							$currentPage = [xml]$currentPage
 						  } catch [System.Management.Automation.RuntimeException] {
@@ -191,12 +191,12 @@
 						if($pages){return 200}
 						if($limit -eq 0){return 0}
 						if($tags -eq ' '){
-							$page = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=1\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://$($ssconfig.url)/posts.json?limit=1\"|ConvertFrom-JSON)
 							return $page[0].id
 						}
 						if($tags.length -eq 1 -or !$tags.substring(1,$tags.length-2).contains(\" \")){
 							$tags = $tags.replace(' ','')
-							$page = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/tags.json?search[name_like]=$tags\u0026limit=5\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://$($ssconfig.url)/tags.json?search[name_like]=$tags\u0026limit=5\"|ConvertFrom-JSON)
 							if($page.count -eq 0){
 								return 0
 							}
@@ -211,12 +211,12 @@
 								return 0
 							}
 						}else{
-							$page = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\"|ConvertFrom-JSON)
 							$count = 0
 							$pageCounter = 2
 							while($page[0] -ne $null){
 								$count += $page.length
-								$page = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\u0026page=$pageCounter\"|ConvertFrom-JSON)
+								$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\u0026page=$pageCounter\"|ConvertFrom-JSON)
 								if($limit -gt 0 -and $count -gt $limit){
 									$count=$limit
 									break
@@ -229,7 +229,7 @@
                      "getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
 						try{
-							$currentPage=(Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts/$id.json\"|ConvertFrom-JSON)
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"https://$($ssconfig.url)/posts/$id.json\"|ConvertFrom-JSON)
 						}catch{
 							Write-Error $Error[0].Exception.Message
 							return $null
@@ -252,9 +252,9 @@
 						param([String]$tags,[switch]$raw,[int]$limit=-1)
 						$postArray = @()
 						if($limit -lt 200 -and $limit -gt 0){
-							$currentPage = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
+							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"https://$($ssconfig.url)/posts.json?limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
 						}else{
-							$currentPage = (Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\"|ConvertFrom-JSON)
+							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\"|ConvertFrom-JSON)
 						}
 						if($currentPage[0] -eq $null -or $limit -eq 0){
 							return @()
@@ -277,7 +277,7 @@
 						  }
 						  Write-Host \"Read page $pageCounter.\"
 						  $pageCounter++
-						  $currentPage=(Invoke-WebRequest -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\u0026page=$pageCounter\"|ConvertFrom-JSON)
+						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"https://$($ssconfig.url)/posts.json?limit=200\u0026tags=$tags\u0026page=$pageCounter\"|ConvertFrom-JSON)
 						}while($currentPage[0] -ne $null)
 						return $postArray
 						}"
@@ -286,13 +286,13 @@
                      "getCount":  "function Get-Count{
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
 						if($pages){return 70}
-						$page = [xml](Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?limit=70\u0026tags=$tags\")
+						$page = [xml](Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?limit=70\u0026tags=$tags\")
 						if($limit -gt 0 -and $page.posts.count -gt $limit){return $limit}
 						return $page.posts.count
 						}",
                      "getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
-						$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?id=$id\")
+						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?id=$id\")
 						try{
 							$currentPage = [xml]$currentPage
 						} catch [System.Management.Automation.RuntimeException] {
@@ -317,9 +317,9 @@
 						if($limit -eq 0){return @()}
 						$postArray = @()
 						if($limit -lt 70 -and $limit -gt 0){
-							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=1\u0026limit=$limit\") -replace '&#039;','&amp;#039;'
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=1\u0026limit=$limit\") -replace '&#039;','&amp;#039;'
 						}else{
-							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=1\u0026limit=70\") -replace '&#039;','&amp;#039;'
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=1\u0026limit=70\") -replace '&#039;','&amp;#039;'
 						}
 						
 						try{
@@ -344,7 +344,7 @@
 							$counter++
 							if($counter -eq $limit){return $postArray}
 						  }
-						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=$($i+1)\u0026limit=70\") -replace '&#039;','&amp;#039;'
+						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=$($i+1)\u0026limit=70\") -replace '&#039;','&amp;#039;'
 						  try{
 							$currentPage = [xml]$currentPage
 						  } catch [System.Management.Automation.RuntimeException] {
@@ -365,7 +365,7 @@
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
 						if($pages){return 320}
 						if(!$tags.contains(' ')){
-							$page = (Invoke-WebRequest -Uri \"$($ssconfig.url)/tag_aliases.json?search[name_matches]=$tags\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/tag_aliases.json?search[name_matches]=$tags\"|ConvertFrom-JSON)
 							if($page[0].id -ne $null){
 								$count=$page[0].post_count
 								if($limit -gt 0 -and $count -gt $limit){
@@ -374,11 +374,11 @@
 								return $count
 							}
 						}
-						$page = (Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\"|ConvertFrom-JSON)
+						$page = (Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\"|ConvertFrom-JSON)
 						$count = 0
 						while($page.posts[0] -ne $null){
 							$count += $page.posts.length
-							$page = (Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=b$($page.posts[-1].id)\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=b$($page.posts[-1].id)\"|ConvertFrom-JSON)
 							if($limit -gt 0 -and $count -gt $limit){
 								$count=$limit
 								break
@@ -388,7 +388,7 @@
 						}",
                      "getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
-						$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=1\u0026page=b$($id+1)\"|ConvertFrom-JSON)
+						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/posts.json?limit=1\u0026page=b$($id+1)\"|ConvertFrom-JSON)
 						
 						if($id -lt 1){
 							return $null
@@ -422,9 +422,9 @@
 						if($limit -eq 0){return @()}
 						$postArray = @()
 						if($limit -lt 320 -and $limit -gt 0){
-							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/posts.json?limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
 						}else{
-							$currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\"|ConvertFrom-JSON)
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\"|ConvertFrom-JSON)
 						}
 						$counter=0
 						$pageCounter=1
@@ -453,7 +453,7 @@
 						  }
 						  Write-Host $(\"Read page $pageCounter.\")
 						  $pageCounter++
-						  $currentPage=(Invoke-WebRequest -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=b$($currentPage.posts[-1].id)\"|ConvertFrom-JSON)
+						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/posts.json?limit=320\u0026tags=$tags\u0026page=b$($currentPage.posts[-1].id)\"|ConvertFrom-JSON)
 						}
 						return $postArray
 						}"
@@ -464,12 +464,12 @@
 						if($pages){return 100}
 						if($limit -eq 0){return 0}
 						if($tags -eq ' '){
-							$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=1\u0026tags=\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=1\u0026tags=\"|ConvertFrom-JSON)
 							return $page.data[0].id
 						}
 						if($tags.length -eq 1 -or !$tags.substring(1,$tags.length-2).contains(\" \")){
 							$tags = $tags.replace(' ','')
-							$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/tags/?name=$tags\u0026limit=5\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/tags/?name=$tags\u0026limit=5\"|ConvertFrom-JSON)
 							if($page.count -eq 0){
 								return 0
 							}
@@ -484,7 +484,7 @@
 								return 0
 							}
 						}else{
-							$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\"|ConvertFrom-JSON)
 							$count = 0
 							while($page.meta.next -ne $null){
 								$count += 100
@@ -492,7 +492,8 @@
 									$count=$limit-$page.data.count
 									break
 								}
-								$page = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($page.meta.next)\"|ConvertFrom-JSON)
+								$page = (Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($page.meta.next)\"|ConvertFrom-JSON)
+								Start-Sleep -Seconds 2
 							}
 							$count += $page.data.count
 						}
@@ -500,7 +501,7 @@
 						}",
                      "getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
-						$currentPage=(Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?tags=id_range:$id\"|ConvertFrom-JSON)
+						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?tags=id_range:$id\"|ConvertFrom-JSON)
 						
 						if($currentPage.data.count -eq 0){
 							return $null
@@ -523,9 +524,9 @@
 						param([String]$tags,[switch]$raw,[int]$limit=-1)
 						$postArray = @()
 						if($limit -lt 100 -and $limit -gt 0){
-							$currentPage = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
+							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
 						}else{
-							$currentPage = (Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\"|ConvertFrom-JSON)
+							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\"|ConvertFrom-JSON)
 						}
 						if($currentPage.meta.next -eq $null -or $limit -eq 0){
 							return @()
@@ -549,7 +550,8 @@
 						  }
 						  Write-Host \"Read page $pageCounter.\"
 						  $pageCounter++
-						  $currentPage=(Invoke-WebRequest -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($currentPage.meta.next)\"|ConvertFrom-JSON)
+						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($currentPage.meta.next)\"|ConvertFrom-JSON)
+						  Start-Sleep -Seconds 2
 						}while($currentPage.meta.prev -ne $null)
 						return $postArray
 						}"
@@ -560,10 +562,10 @@
 						if($pages){return 60}
 						if($limit -eq 0){return 0}
 						if($tags -eq ' '){
-							$page = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=\u0026limit=1\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=\u0026limit=1\"|ConvertFrom-JSON)
 							return $page[0].id
 						}
-						$page = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=60\"|ConvertFrom-JSON)
+						$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=60\"|ConvertFrom-JSON)
 						$count= 0
 						while($page.length -gt 0){
 							$count += $page.length
@@ -571,13 +573,13 @@
 								$count = $limit
 								break
 							}
-							$page = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=60\u0026next=$($page[-1].id-1)\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=60\u0026next=$($page[-1].id-1)\"|ConvertFrom-JSON)
 						}
 						return $count
 						}",
                      "getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
-						$currentPage=(Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?next=$id\u0026limit=1\"|ConvertFrom-JSON)
+						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?next=$id\u0026limit=1\"|ConvertFrom-JSON)
 
 						if($currentPage.length -eq 0){
 							Write-Warning 'The post you were looking for could not be found. It was probably deleted.'
@@ -601,9 +603,9 @@
 						param([String]$tags,[switch]$raw,[int]$limit=-1)
 						$postArray = @()
 						if($limit -lt 60 -and $limit -gt 0){
-							$currentPage = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
+							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=$limit\u0026tags=$tags\"|ConvertFrom-JSON)
 						}else{
-							$currentPage = (Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=60\u0026tags=$tags\"|ConvertFrom-JSON)
+							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=60\u0026tags=$tags\"|ConvertFrom-JSON)
 						}
 						if($currentPage.length -eq 0 -or $limit -eq 0){
 							return @()
@@ -629,7 +631,7 @@
 							Write-Host \"Read page $pageCounter.\"
 							$pageCounter++
 							$prevID=$currentPage[-1].id-1
-							$currentPage=(Invoke-WebRequest -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=60\u0026tags=$tags\u0026next=$prevID\"|ConvertFrom-JSON)
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=60\u0026tags=$tags\u0026next=$prevID\"|ConvertFrom-JSON)
 						}while($currentPage.length -ne 0)
 							return $postArray
 					}"
