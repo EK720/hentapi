@@ -251,6 +251,11 @@ function Add-Metadata {
                 $Path = "$PathDir$name.jpeg"
                 $ext="jpeg"
             }
+
+            "net"{
+                Write-Progress -Activity "Editing file" -Id 1 -Status "Changing filetype (null -> *)" -PercentComplete 50 -ParentId 0
+                $FileData = Invoke-WebRequest -Uri 
+            }
         }
         
         if($writable.indexOf($ext.ToUpper()) -eq -1){
@@ -571,7 +576,7 @@ if($Update){
     #once all done, combine on newlines and append to the current queries file
     #delete updateCheckpoint
     if(Test-Path $DLPath){
-        if((Get-Item $DLPath).Mode -ne "d-----"){
+        if((Get-Item $DLPath).Mode -notmatch "d"){
             throw "The update target is not a directory. Please check your path and try again."
             exit
         }
@@ -589,7 +594,9 @@ if($Update){
         $qFiles += Get-ChildItem $UpdatePath -name updateCheckpoint -Recurse
         Write-Host ("Updating collections in folder `""+(get-item $UpdatePath).name+"`"..")
         forEach($qFile in $qFiles){
-            $out=$updatePath+$qFile.substring(0,$qFile.length-7)
+            $matches = ""
+            $qFile -match "(.+)\\[^\\]+$"
+            $out=$updatePath+$matches[1]+"\"
             $ext=""
             
             if($Array){$ext += " -Array"}
@@ -677,7 +684,7 @@ if($Update){
             ToBase64 "http://www.ostracodfiles.com/dots/main.html" > update
             ToBase64 $diff >> update
             Invoke-Expression($baseExpression + " -Download -Limit $diff")
-            $qArray.done += $qArray.notDone[0]
+            $qArray.done += ToBase64 ($query|ConvertTo-Json -Compress)
             $qArray.notDone = $qArray.notDone[1..($qArray.notDone.length)]
             ConvertTo-Json $qArray -Compress > "updateCheckpoint"
         }
@@ -692,7 +699,7 @@ if($Update){
         Write-Host ("Collection `""+$UpdatePath.split('\')[-2]+"`" successfully updated.")
     }catch{
         Write-Error $_
-        Write-Error "There was an error during the update process. See line 693 for more information."
+        Write-Error "There was an error during the update process. See line 697 for more information."
     }finally{
         if(Test-Path "update"){
             del "update"
@@ -968,6 +975,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
     $postData = GetTaggedPosts -tags $tags -limit $Limit
     $postCount = $postData.length
+    $updateMode = Test-Path $DLPath"update"
 
     Write-Verbose $("Found $postCount posts matching tag(s) `"$Tags`".")
 
@@ -1036,21 +1044,27 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                 } else {
                     $postData.md5>>$DLPath\hashlist
                 }
+            }else{
+                $hashDupe = $True
             }
 
             if((get-childitem ("$DLPath/$id.*") | where Name -match "$id\.($badExt)").count -gt 0){
                 Write-Host "Post #$id was successfully downloaded to $DLPath."
+            }elseif($hashDupe){
+                Write-Host "Post #$id not downloaded because it matches an already downloaded image."
             }else{
                 throw "Something went wrong during download. Is your file path valid?"
             }
 
-            $query = @{}
-            $query.server = $Server
-            $query.tags = $Tags
-            $query.count = 1
-            $query.md5 = if($MD5){$true}else{$false}
-            $queryString = ConvertTo-JSON $query -Compress
-            ToBase64 $queryString >> ($DLPath + "queries")
+            if(!$updateMode){
+                $query = @{}
+                $query.server = $Server
+                $query.tags = $Tags
+                $query.count = 1
+                $query.md5 = if($MD5){$true}else{$false}
+                $queryString = ConvertTo-JSON $query -Compress
+                ToBase64 $queryString >> ($DLPath + "queries")
+            }
 
             return
         }else{
@@ -1058,7 +1072,6 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
         }
     } else {
         [String[]]$imageLinks = @()
-        $updateMode = Test-Path $DLPath"update"
         $pages = [Math]::ceiling($postCount/(Get-Count -tags $tags -Pages))
 
         if($Download){
@@ -1193,15 +1206,14 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                 Write-Host ("Updated page $pageNum.")
             }else{
                 Write-Host ("Downloaded page $pageNum.")
+                $query = @{}
+                $query.server = $Server
+                $query.tags = $Tags
+                $query.count = $postCount
+                $query.md5 = if($MD5){$true}else{$false}
+                $queryString = ConvertTo-JSON $query -Compress
+                ToBase64 $queryString >> ($DLPath + "queries")
             }
-
-            $query = @{}
-            $query.server = $Server
-            $query.tags = $Tags
-            $query.count = $postCount
-            $query.md5 = if($MD5){$true}else{$false}
-            $queryString = ConvertTo-JSON $query -Compress
-            ToBase64 $queryString >> ($DLPath + "queries")
             return
         }
     }

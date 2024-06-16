@@ -282,81 +282,109 @@
 						return $postArray
 						}"
                  },
-	"Shimmie":  {
+	"Paheal":  {
                      "getCount":  "function Get-Count{
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
-						if($pages){return 70}
-						$page = [xml](Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?limit=70\u0026tags=$tags\")
-						if($limit -gt 0 -and $page.posts.count -gt $limit){return $limit}
-						return $page.posts.count
-						}",
-                     "getPost":  "function Get-Post{
-						param([int]$id,[switch]$raw)
-						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?id=$id\")
-						try{
-							$currentPage = [xml]$currentPage
-						} catch [System.Management.Automation.RuntimeException] {
-							$currentPage = [xml][xml]([System.Net.WebUtility]::HtmlDecode($currentPage) -replace '&','&amp;')
+						if($pages){return 100}
+						if($limit -eq 0){return 0}
+						if($tags -eq \u0027 \u0027){
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026pageID=0\u0026tags=*\"|ConvertFrom-JSON)
+							return $page.data[0].id
 						}
-						if($currentPage.posts.tag -eq $null){
+						if($tags.length -eq 1 -or !$tags.substring(1,$tags.length-2).contains(\" \")){
+							$tags = $tags.replace(\u0027 \u0027,\u0027\u0027)
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/tags?baseEndpoint=$($ssconfig.url)\u0026tag=$tags\u0026order=count\"|ConvertFrom-JSON)
+							if($page.data.length -eq 0){
+									return 0
+							}
+							
+							$foundTag = $page.data|? {$_.name -ieq $tags}
+							if($foundTag -ne $nul){
+									if($limit -gt 0 -and $foundTag.count.count -gt $limit){
+											$count=$limit
+									}else{
+											$count=$foundTag.count.count
+									}
+							}else{
+									#substitute incomplete tag for complete one thru create-menu
+									$title = \"Tag `\"$tags`\" not found. Use one of these instead?\"
+									$items = $page.data.name[0..4]
+									$respIndex = Create-Menu -MenuTitle $title -MenuOptions $items
+									return (get-count -Tags $items[$respIndex] -Pages:$pages -Limit $limit)
+							}
+						}else{
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026pageID=0\u0026tags=$tags\"|ConvertFrom-JSON)
+							$count = 0
+							$pageNum = 0
+							while($page.data.count -ne 0){
+									$count += $page.meta.items_count
+									if($limit -gt 0 -and $count -gt $limit){
+											$count=$limit-$page.data.count
+											break
+									}
+									$pageNum++
+									$page = (Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026pageID=$pageNum\u0026tags=$tags\"|ConvertFrom-JSON)
+							}
+							$count += $page.data.count
+						}
+						return $count
+					}",
+					"getPost":  "function Get-Post{
+						param([int]$id,[switch]$raw)
+						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026tags=id:$id\"|ConvertFrom-JSON)
+
+						if($currentPage.data.count -eq 0){
 							return $null
 						}
-						
+
+						$post = $currentPage.data[0]
+						if($post.id -ne $id){
+							Write-Warning \u0027The post you were looking for could not be found. It was probably deleted.\u0027
+							return $null
+						}
+
 						if($raw){
-							return $currentPage.posts.tag
+							return $post
 						}else{
-							$post = $currentPage.posts.tag
-							if($post.file_url.startsWith('/')){
-								$post.file_url = 'http://'+$ssconfig.url+$post.file_url
-							}
-							return @{id=$post.id;file=$post.file_url;uploaded=[dateTime]::ParseExact($post.date.split('.')[0],'yyyy-MM-dd HH:mm:ss',$null);md5=$post.md5;tags=$post.tags;rating=$post.rating}
+							[dateTime]$timeOrigin = \u00271970-01-01 00:00:00\u0027
+							$tmp = $post.high_res_file.url -match \u0027([^\\/]+)$\u0027
+							return @{id=$post.id;file=$post.high_res_file.url;uploaded=$timeOrigin;md5=$matches[0];tags=($post.tags.general -join \u0027 \u0027);rating=\"explicit\"}
 						}
-						}",
-                     "getTaggedPosts":  "function Get-TaggedPosts{
+					}",
+					"getTaggedPosts":  "function Get-TaggedPosts{
 						param([String]$tags,[switch]$raw,[int]$limit=-1)
-						if($limit -eq 0){return @()}
 						$postArray = @()
-						if($limit -lt 70 -and $limit -gt 0){
-							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=1\u0026limit=$limit\") -replace '&#039;','&amp;#039;'
-						}else{
-							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=1\u0026limit=70\") -replace '&#039;','&amp;#039;'
+						if($tags -match \u0027^\\s+$\u0027){$tags = \"*\"}
+						$pageURI = \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026tags=$tags\"
+						if($limit -lt 100 -and $limit -gt 0){
+							$pageURI += \"\u0026limit=$limit\"
 						}
-						
-						try{
-							$currentPage = [xml]$currentPage
-						} catch [System.Management.Automation.RuntimeException] {
-							$currentPage = [xml]([System.Net.WebUtility]::HtmlDecode($currentPage) -replace '&','&amp;')
+						$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri $pageURI|ConvertFrom-JSON)
+						if($currentPage.meta.items_count -eq 0 -or $limit -eq 0){
+							return @()
 						}
 						$counter=0
-						
-						for ($i=1;$i -le [Math]::ceiling($currentPage.posts.count/70);$i++){
-						  forEach($post in $currentPage.posts.tag){
-							$creationTime = [dateTime]::ParseExact($post.date.split('.')[0],'yyyy-MM-dd HH:mm:ss',$null)
+						$pageCounter=1
+						[dateTime]$timeOrigin = \u00271970-01-01 00:00:00\u0027
+						do{
+						  forEach($post in $currentPage.data){
+							if($post.high_res_file.url -eq $null -and !$raw){
+								continue
+							}
+							$counter++
 							if($raw){
 								$postArray += $post
 							}else{
-								if($post.file_url.startsWith('/')){
-									$post.file_url = 'http://'+$ssconfig.url+$post.file_url
-								}
-								$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=$post.tags;rating=$post.rating}
+								$tmp = $post.high_res_file.url -match \u0027([^\\/]+)$\u0027
+								$ext = (Invoke-WebRequest -uri $post.high_res_file.url -Method Head).Headers.\"Content-Type\" -replace \u0027^[^\\/]+\\/\u0027,\u0027\u0027
+								$postArray += @{id=$post.id;file=$post.high_res_file.url+\"?.\"+$ext;uploaded=$timeOrigin;md5=$matches[0];tags=($post.tags.general -join \" \");rating=\"explicit\"}
 							}
-							
-							$counter++
 							if($counter -eq $limit){return $postArray}
 						  }
-						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/api/danbooru/find_posts/index.xml?tags=$tags\u0026page=$($i+1)\u0026limit=70\") -replace '&#039;','&amp;#039;'
-						  try{
-							$currentPage = [xml]$currentPage
-						  } catch [System.Management.Automation.RuntimeException] {
-						  	$currentPage = [xml]([System.Net.WebUtility]::HtmlDecode($currentPage) -replace '&','&amp;')
-						  }
-						  
-						  if($limit -gt 0){
-							Write-Host $('Read page ' + $i + '/' + [Math]::ceiling($limit/70) + '.')
-						  }else{
-							Write-Host $('Read page ' + $i + '/' + [Math]::ceiling($currentPage.posts.count/70) + '.')
-						  }
-						}
+						  Write-Host \"Read page $pageCounter.\"
+						  $pageCounter++
+						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri ($pageURI+\"\u0026pageID=$($pageCounter-1)\")|ConvertFrom-JSON)
+						}while($currentPage.meta.items_count -gt 0)
 						return $postArray
 						}"
                  },
