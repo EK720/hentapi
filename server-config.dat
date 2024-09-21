@@ -285,25 +285,26 @@
 	"Paheal":  {
                      "getCount":  "function Get-Count{
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
+						$userAgentString = \"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0\"
 						if($pages){return 100}
 						if($limit -eq 0){return 0}
 						if($tags -eq \u0027 \u0027){
-							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026pageID=0\u0026tags=*\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UserAgent $userAgentString -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026pageID=0\u0026tags=*\"|ConvertFrom-JSON)
 							return $page.data[0].id
 						}
 						if($tags.length -eq 1 -or !$tags.substring(1,$tags.length-2).contains(\" \")){
 							$tags = $tags.replace(\u0027 \u0027,\u0027\u0027)
-							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/tags?baseEndpoint=$($ssconfig.url)\u0026tag=$tags\u0026order=count\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UserAgent $userAgentString -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/tags?baseEndpoint=$($ssconfig.url)\u0026tag=$tags\u0026order=count\"|ConvertFrom-JSON)
 							if($page.data.length -eq 0){
 									return 0
 							}
 							
 							$foundTag = $page.data|? {$_.name -ieq $tags}
 							if($foundTag -ne $nul){
-									if($limit -gt 0 -and $foundTag.count.count -gt $limit){
+									if($limit -gt 0 -and $foundTag.count -gt $limit){
 											$count=$limit
 									}else{
-											$count=$foundTag.count.count
+											$count=$foundTag.count
 									}
 							}else{
 									#substitute incomplete tag for complete one thru create-menu
@@ -313,17 +314,18 @@
 									return (get-count -Tags $items[$respIndex] -Pages:$pages -Limit $limit)
 							}
 						}else{
-							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026pageID=0\u0026tags=$tags\"|ConvertFrom-JSON)
+							$page = (Invoke-WebRequest -UserAgent $userAgentString -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026pageID=0\u0026tags=$tags\"|ConvertFrom-JSON)
 							$count = 0
 							$pageNum = 0
 							while($page.data.count -ne 0){
-									$count += $page.meta.items_count
-									if($limit -gt 0 -and $count -gt $limit){
-											$count=$limit-$page.data.count
-											break
-									}
-									$pageNum++
-									$page = (Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026pageID=$pageNum\u0026tags=$tags\"|ConvertFrom-JSON)
+								$count += $page.meta.items_count
+								if($limit -gt 0 -and $count -gt $limit){
+										$count=$limit-$page.data.count
+										break
+								}
+								$pageNum++
+								$page = (Invoke-WebRequest -UserAgent $userAgentString -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026pageID=$pageNum\u0026tags=$tags\"|ConvertFrom-JSON)
+								Start-Sleep -Seconds 1.5
 							}
 							$count += $page.data.count
 						}
@@ -331,7 +333,7 @@
 					}",
 					"getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
-						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026tags=id:$id\"|ConvertFrom-JSON)
+						$currentPage=(Invoke-WebRequest -UserAgent \"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0\" -UseBasicParsing -Uri \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026tags=id:$id\"|ConvertFrom-JSON)
 
 						if($currentPage.data.count -eq 0){
 							return $null
@@ -356,10 +358,11 @@
 						$postArray = @()
 						if($tags -match \u0027^\\s+$\u0027){$tags = \"*\"}
 						$pageURI = \"api.r34.app/booru/rule34.paheal.net/posts?baseEndpoint=$($ssconfig.url)\u0026tags=$tags\"
+						$userAgentString = \"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0\"
 						if($limit -lt 100 -and $limit -gt 0){
 							$pageURI += \"\u0026limit=$limit\"
 						}
-						$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri $pageURI|ConvertFrom-JSON)
+						$currentPage = (Invoke-WebRequest -UserAgent $userAgentString -UseBasicParsing -Uri $pageURI|ConvertFrom-JSON)
 						if($currentPage.meta.items_count -eq 0 -or $limit -eq 0){
 							return @()
 						}
@@ -376,14 +379,15 @@
 								$postArray += $post
 							}else{
 								$tmp = $post.high_res_file.url -match \u0027([^\\/]+)$\u0027
-								$ext = (Invoke-WebRequest -uri $post.high_res_file.url -Method Head).Headers.\"Content-Type\" -replace \u0027^[^\\/]+\\/\u0027,\u0027\u0027
+								$ext = (Invoke-WebRequest -UserAgent $userAgentString -uri $post.high_res_file.url -Method Head).Headers.\"Content-Type\" -replace \u0027^[^\\/]+\\/\u0027,\u0027\u0027
 								$postArray += @{id=$post.id;file=$post.high_res_file.url+\"?.\"+$ext;uploaded=$timeOrigin;md5=$matches[0];tags=($post.tags.general -join \" \");rating=\"explicit\"}
 							}
 							if($counter -eq $limit){return $postArray}
 						  }
 						  Write-Host \"Read page $pageCounter.\"
 						  $pageCounter++
-						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri ($pageURI+\"\u0026pageID=$($pageCounter-1)\")|ConvertFrom-JSON)
+						  $currentPage=(Invoke-WebRequest -UserAgent $userAgentString -UseBasicParsing -Uri ($pageURI+\"\u0026pageID=$($pageCounter-1)\")|ConvertFrom-JSON)
+						  Start-Sleep -Seconds 1.5
 						}while($currentPage.meta.items_count -gt 0)
 						return $postArray
 						}"
@@ -521,7 +525,7 @@
 									break
 								}
 								$page = (Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($page.meta.next)\"|ConvertFrom-JSON)
-								Start-Sleep -Seconds 2
+								Start-Sleep -Seconds 1.5
 							}
 							$count += $page.data.count
 						}
@@ -556,7 +560,7 @@
 						}else{
 							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\"|ConvertFrom-JSON)
 						}
-						if($currentPage.meta.next -eq $null -or $limit -eq 0){
+						if($currentPage.data.count -eq 0 -or $limit -eq 0){
 							return @()
 						}
 						$counter=0
@@ -579,7 +583,7 @@
 						  Write-Host \"Read page $pageCounter.\"
 						  $pageCounter++
 						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($currentPage.meta.next)\"|ConvertFrom-JSON)
-						  Start-Sleep -Seconds 2
+						  Start-Sleep -Seconds 1.5
 						}while($currentPage.meta.prev -ne $null)
 						return $postArray
 						}"
@@ -587,21 +591,23 @@
 	"Idol Complex":  {
                      "getCount":  "function Get-Count{
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
-						if($pages){return 60}
+						if($pages){return 25}
 						if($limit -eq 0){return 0}
 						if($tags -eq ' '){
 							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=\u0026limit=1\"|ConvertFrom-JSON)
 							return $page[0].id
 						}
-						$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=60\"|ConvertFrom-JSON)
+						$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=50\"|ConvertFrom-JSON)
 						$count= 0
+						$pageNum = 1
 						while($page.length -gt 0){
 							$count += $page.length
 							if($limit -gt 0 -and $count -gt $limit){
 								$count = $limit
 								break
 							}
-							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=60\u0026next=$($page[-1].id-1)\"|ConvertFrom-JSON)
+							$pageNum++
+							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?tags=$tags\u0026limit=50\u0026page=$pageNum\"|ConvertFrom-JSON)
 						}
 						return $count
 						}",
@@ -658,8 +664,7 @@
 							}
 							Write-Host \"Read page $pageCounter.\"
 							$pageCounter++
-							$prevID=$currentPage[-1].id-1
-							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=60\u0026tags=$tags\u0026next=$prevID\"|ConvertFrom-JSON)
+							$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"https://iapi.$($ssconfig.url)/post/index.json?limit=60\u0026tags=$tags\u0026page=$pageCounter\"|ConvertFrom-JSON)
 						}while($currentPage.length -ne 0)
 							return $postArray
 					}"

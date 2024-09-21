@@ -84,7 +84,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2023-07-08
+    Last Edit: 2024-09-21
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -117,6 +117,7 @@
     Version 2.94- Fixed a small bug involving video files not being tagged correctly.
     Version 2.96- Over a year since last update... Anyway, I fixed a bug that resulted in query files for a collection being fucked up if the update errored while working on that collection.
     Version 2.98- Changed the update system to be resumable (e.g no files are fucked up if a crash occurs mid-update). Large overhaul of update system.
+    Version 2.99- Fixed some miscellaneous bugs and improved performance. Version 3 will have booru.org support and then the program will pretty much be finished.
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -312,7 +313,7 @@ function Add-Metadata {
 function HashCheck {
     param([string]$Path, $Post, [int]$Count=1)
     
-    $maxTries=15
+    $maxTries=3
     Write-Progress -Activity "Checking file hash.." -PercentComplete 0 -ParentId 0 -Id 1
 
     if($Count -gt $maxTries){
@@ -595,7 +596,7 @@ if($Update){
         Write-Host ("Updating collections in folder `""+(get-item $UpdatePath).name+"`"..")
         forEach($qFile in $qFiles){
             $matches = ""
-            $qFile -match "(.+)\\[^\\]+$"
+            $qFile -match "(.+)\\[^\\]+$" > $nul
             $out=$updatePath+$matches[1]+"\"
             $ext=""
             
