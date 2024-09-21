@@ -1,8 +1,14 @@
 # hentapi
-A Powershell-based imageboard search/download tool.
+A Powershell-based imageboard search/download tool. Can programatically download and update images from many common booru types, including:
+- Gelbooru
+- Danbooru
+- Shimmie
+- MyImouto
+- Sankaku
+- (BOORU.ORG COMING SOON)
 
 # Documentation
- - Documentation is contained in the script. To view it, run the command `Get-Help .\hentapi.ps1` in the same directory as the program itself.
+Documentation is contained in the script. To view it, run the command `Get-Help .\hentapi.ps1` in the same directory as the program itself.
 
 # Other Info
  - If you have any issues with the program or suggestions for its improvement, please open an issue and let me know.
