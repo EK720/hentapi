@@ -9,6 +9,7 @@ A Powershell-based imageboard search/download tool. Can programatically download
 
 # Documentation
 Documentation is contained in the script. To view it, run the command `Get-Help .\hentapi.ps1` in the same directory as the program itself.
+Basic usage is done through the command `hentapi -server <Server Name> -tags "<Tags>" -limit <Limit> -Download`
 
 # Other Info
  - If you have any issues with the program or suggestions for its improvement, please open an issue and let me know.
