@@ -525,6 +525,7 @@
 									break
 								}
 								$page = (Invoke-WebRequest -UseBasicParsing -Uri \"capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=1\u0026limit=100\u0026tags=$tags\u0026next=$($page.meta.next)\"|ConvertFrom-JSON)
+								Write-Host \"Counted page $($count/100).\"
 								Start-Sleep -Seconds 1.5
 							}
 							$count += $page.data.count
@@ -668,5 +669,149 @@
 						}while($currentPage.length -ne 0)
 							return $postArray
 					}"
-                 }
+                 },
+	"Booru.org (Gelbooru 0.1.11)":	{
+					"getCount":"function Get-Count {
+						param([String]$tags,[int]$limit=-1,[switch]$pages)
+						if($tags -match '^(\\s|\\*)$'){
+							$tags='all'
+						}
+						if($pages){
+							return 20
+						}
+						while($true){
+							try{
+								$page = Invoke-WebRequest -Uri \"https://$($ssconfig.url)/index.php?page=post\u0026s=list\u0026tags=$tags\"
+								break
+							}catch [System.InvalidOperationException]{
+								Start-Sleep -Milliseconds 500
+								continue
+							}
+						}
+						$pageThumbs = $page.ParsedHtml.getElementsByTagName('span')
+						$postIDs = $pageThumbs|? {$_.className -eq 'thumb'}
+
+						if(($postIDs -eq $null) -or ($limit -eq 0)){
+							return 0
+						}
+
+						#If there's only one page, return the amt of posts on page 1. Otherwise, get the last page, add the offset to the amt of posts, and return the total.
+						$pageLinks = $page.ParsedHtml.getElementById('paginator').children
+						if($pageLinks.length -lt 4){
+							$count = [int]$postIDs.count
+						}else{
+							$lastUrl = $pageLinks[$pageLinks.length-1].search
+							$lastUrl -match 'pid=(\\d+)'\u003e$null
+							while($true){
+								try{
+									$lastPage = Invoke-WebRequest -Uri (\"https://$($ssconfig.url)/index.php$lastUrl\")
+									break
+								}catch [System.InvalidOperationException]{
+									Start-Sleep -Milliseconds 500
+									continue
+								}
+							}
+							$lastThumbs = $lastPage.ParsedHtml.getElementsByTagName('span')
+							$lastIDs = $lastThumbs|? {$_.className -eq 'thumb'}
+							$count = [int]$Matches[1] + $lastIDs.count
+						}
+
+						if($count -gt $limit -and $limit -gt 0){
+							return $limit
+						}else{
+							return $count
+						}
+						}",
+					"getPost":"function Get-Post {
+						param([int]$id,[switch]$raw)
+
+						$response=$null
+						while($response -eq $null){
+							try{
+								$response = Invoke-Webrequest -Uri \"https://$($ssconfig.url)/index.php?page=post\u0026s=view\u0026id=$ID\"
+							}catch [System.InvalidOperationException]{
+								Start-Sleep -Milliseconds 500
+								continue
+							}
+						}
+
+						$url = ($response.images |? {$_.id -eq 'image'}).src
+
+						#if url eq null then post not found
+						if($url -eq $null){
+							return $null
+						}
+						if($raw){
+							return $response.content
+						}
+
+						$dataList = $response.ParsedHtml.getElementById('tag_list')
+						$tagStr = ''
+						forEach($tag in $dataList.children[1].children){
+							$tagStr += $tag.children[0].children[0].innerText + ';'
+						}
+						$tagStr = $tagStr.trimEnd(';') -replace ' ','_'
+
+						$extraInfo = ($dataList.children[1].innerText -split 'Statistics')[1]
+						$extraInfo -match 'Posted: ([^\\r\\n]*)'\u003e$null
+						$uploadDate = [datetime]::Parse($Matches.1)
+						$extraInfo -match 'Size: ([^\\r\\n]*)'\u003e$null
+						$size = $Matches[1].Trim(' ') -split 'x'
+						$extraInfo -match 'Source:([^\\r\\n]*)'\u003e$null
+						$source = $Matches[1].Trim(' ')
+						$extraInfo -match 'Score: ([^\\r\\n]*)'\u003e$null
+						$score = [int]$Matches[1].Trim(' ')
+						$extraInfo -match 'Rating: ([^\\r\\n]*)'\u003e$null
+
+						#can't use MD5 here because the file URL contains SHA1(MD5(image)), and i would have to de-hash the URL (stupid and unnecessary).
+						return @{id=$ID;file=$url;uploaded=$uploadDate;md5='SKIP';size=$size;source=$source;score=$score;tags=$tagStr;rating=$Matches[1].toLower().Trim(' ')}
+						}",
+					"getTaggedPosts":"function Get-TaggedPosts {
+						param([String]$tags,[switch]$raw,[int]$limit = -1,[switch]$count)
+						if($tags -match '^(\\s|\\*)$'){
+							$tags='all'
+						}
+						$page = Invoke-WebRequest -Uri \"https://$($ssconfig.url)/index.php?page=post\u0026s=list\u0026tags=$tags\"
+						$pageThumbs = $page.ParsedHtml.getElementsByTagName('span')
+						$postIDs = $pageThumbs|? {$_.className -eq 'thumb'}
+						$postArray = @()
+
+						if(($postIDs -eq $null) -or ($limit -eq 0)){
+							return $postArray
+						}
+
+						$offset = 0
+						$pageCounter = 0
+
+						do{
+							forEach($post in $postIDs){
+								$id = $post.children[0].id.Substring(1)
+								$postArray += Get-Post -id $id
+								$limit--
+								if($limit -eq 0){
+									return $postArray
+								}
+							}
+
+							$offset += $postIDs.length
+							$pageCounter++
+							Write-Host \"Read page $pageCounter.\"
+
+							while($true){
+								try{
+									$page = Invoke-WebRequest -Uri \"https://$($ssconfig.url)/index.php?page=post\u0026s=list\u0026tags=$tags\u0026pid=$offset\"
+									break
+								}catch [System.InvalidOperationException]{
+									Start-Sleep -Milliseconds 500
+									continue
+								}
+							}
+							$pageThumbs = $page.ParsedHtml.getElementsByTagName('span')
+							$postIDs = $pageThumbs|? {$_.className -eq 'thumb'}
+
+						}while($postIDs -ne $null)
+
+						return $postArray
+						}"
+				}
 }

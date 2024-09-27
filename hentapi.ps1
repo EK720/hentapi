@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Just another imageboard API linkgrabber, with image tagging as well as download & update support.
-    It's more of a passion project than something that fills a need, though. I hope it works well for you.
+    It's more of a passion project than something that fills a need, though I hope it works well for you.
 
 .DESCRIPTION
     A more detailed description of what the function does. (remember to add)
@@ -79,12 +79,14 @@
     PS C:\> hentapi -Server gelbooru -Post 177013 -Download
 
 .EXAMPLE
-    I'm sorry if these are bad. I don't know how to do examples.
+    The example below checks the amount of posts matching the VTuber "Amelia Watson" on your self-hosted booru, and returns the total post count.
+    PS C:\> hentapi -Server mybooru -Tags amelia_watson -Count
+    273
 
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2024-09-21
+    Last Edit: 2024-09-27
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -118,6 +120,7 @@
     Version 2.96- Over a year since last update... Anyway, I fixed a bug that resulted in query files for a collection being fucked up if the update errored while working on that collection.
     Version 2.98- Changed the update system to be resumable (e.g no files are fucked up if a crash occurs mid-update). Large overhaul of update system.
     Version 2.99- Fixed some miscellaneous bugs and improved performance. Version 3 will have booru.org support and then the program will pretty much be finished.
+    Version 3.0 - Finally added booru.org and gelbooru 0.1 support, and now I believe this program is pretty much complete. If I find some terrible bugs or get inspiration for new good features, there may be another update. (bugfix update likely)
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -321,7 +324,7 @@ function HashCheck {
         return
     }
 
-    if($ignoreHashCheck){
+    if($ignoreHashCheck -or ($Post.md5 -eq "SKIP")){
         return
     }
 
@@ -340,8 +343,8 @@ function HashCheck {
         HashCheck -Path $Path -Post $Post
         return
     }else{
-        $hash = (get-fileHash $Path -algorithm MD5).hash
         Write-Progress -Activity "Checking file hash.." -Status "Hashing file (Attempt $Count of $maxTries)" -PercentComplete 50 -ParentId 0 -Id 1
+        $hash = (get-fileHash $Path -algorithm MD5).hash
     }
     
     if($hash -eq $Post.md5){
@@ -1073,7 +1076,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
         }
     } else {
         [String[]]$imageLinks = @()
-        $pages = [Math]::ceiling($postCount/(Get-Count -tags $tags -Pages))
+        $pages = [Math]::ceiling($postCount/[int](Get-Count -tags $tags -Pages))
 
         if($Download){
             Get-EventSubscriber -Force | Unregister-Event -Force
