@@ -5,7 +5,7 @@ A Powershell-based imageboard search/download tool. Can programatically download
 - Shimmie
 - MyImouto
 - Sankaku
-- (BOORU.ORG COMING SOON)
+- Booru.org
 
 # Documentation
 Documentation is contained in the script. To view it, run the command `Get-Help .\hentapi.ps1` in the same directory as the program itself.
