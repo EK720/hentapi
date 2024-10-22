@@ -86,7 +86,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2024-09-27
+    Last Edit: 2024-10-22
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -121,6 +121,7 @@
     Version 2.98- Changed the update system to be resumable (e.g no files are fucked up if a crash occurs mid-update). Large overhaul of update system.
     Version 2.99- Fixed some miscellaneous bugs and improved performance. Version 3 will have booru.org support and then the program will pretty much be finished.
     Version 3.0 - Finally added booru.org and gelbooru 0.1 support, and now I believe this program is pretty much complete. If I find some terrible bugs or get inspiration for new good features, there may be another update. (bugfix update likely)
+    Version 3.01- Fixed bugs with the Paheal and Sankaku APIs. You should see far less errors now.
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -216,10 +217,16 @@ function Add-Metadata {
         $tagsList = $Post.tags.Split(" ")
     }
 
+    if($Post.ext -ne $null){
+        $oldFile = Get-Item $Path
+        Rename-Item $Path ($oldFile.BaseName + "." + $Post.ext)
+        $Path = ($oldFile.DirectoryName + "\" + $oldFile.BaseName + "." + $Post.ext)
+    }
+
     $metaTags = $tagsList -join ";"
-    $file=$Path.split("\")[-1]
-    $name = $file.Substring(0,$file.LastIndexOf("."))
-    $PathDir = $Path.Substring(0,$Path.LastIndexOf("\")+1)
+    $file = Get-Item $Path
+    $name = $file.BaseName
+    $PathDir = $file.DirectoryName + "\"
     $oldExt = $Path.split(".")[-1]
     $ext=$oldExt
     
@@ -254,11 +261,6 @@ function Add-Metadata {
                 del $Path
                 $Path = "$PathDir$name.jpeg"
                 $ext="jpeg"
-            }
-
-            "net"{
-                Write-Progress -Activity "Editing file" -Id 1 -Status "Changing filetype (null -> *)" -PercentComplete 50 -ParentId 0
-                $FileData = Invoke-WebRequest -Uri 
             }
         }
         
@@ -523,6 +525,7 @@ function GetTaggedPosts{
         $posts = Get-TaggedPosts -Tags $tags -raw:$raw -limit $limit
     }catch [System.Management.Automation.CommandNotFoundException]{
         Invoke-Expression $ssconfig.getTaggedPosts
+        Invoke-Expression $ssconfig.getPost
         $posts = Get-TaggedPosts -Tags $tags -raw:$raw -limit $limit
     }
 
@@ -1234,7 +1237,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
 
 if( $ToClipBoard ){
-    Set-Clipboard -Value $output
+    Set-Clipboard -Text ($output -join "`n")
 } else {
     $output
 }
