@@ -4,7 +4,7 @@ A Powershell-based imageboard search/download tool. Can programatically download
 - Danbooru
 - Shimmie
 - MyImouto
-- Sankaku
+- Sankaku Complex
 - Booru.org
 
 # Documentation
