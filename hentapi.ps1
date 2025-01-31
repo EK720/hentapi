@@ -86,7 +86,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2024-10-22
+    Last Edit: 2025-01-31
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -122,6 +122,7 @@
     Version 2.99- Fixed some miscellaneous bugs and improved performance. Version 3 will have booru.org support and then the program will pretty much be finished.
     Version 3.0 - Finally added booru.org and gelbooru 0.1 support, and now I believe this program is pretty much complete. If I find some terrible bugs or get inspiration for new good features, there may be another update. (bugfix update likely)
     Version 3.01- Fixed bugs with the Paheal and Sankaku APIs. You should see far less errors now.
+    Version 3.1 - ACTUALLY fixed the damn Sankaku API by implementing a login function and token saving. When the token expires, the function should automatically log in again without the user needing to do anything. How long before this breaks?
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -431,7 +432,7 @@ function Clear-Lines {
     [Console]::SetCursorPosition(0,($CurrentLine - $Count))
 }
 
-Function Create-Menu {
+function Create-Menu {
     Param(
         [Parameter(Mandatory=$True)][String]$MenuTitle,
         [Parameter(Mandatory=$True)][array]$MenuOptions,
@@ -483,7 +484,7 @@ Function Create-Menu {
     }
 }
 
-Function Get-MetaData{
+function Get-MetaData{
     Param([parameter(ValueFromRemainingArguments=$true)][string[]]$File,[int]$ExifID=-1,[switch]$listId)
     #make a forEach and string[] param
     $objShell = New-Object -ComObject Shell.Application
@@ -535,6 +536,22 @@ function GetTaggedPosts{
     }
 
     return $posts
+}
+
+function SaveTo-UserConfig {
+    param([parameter(Mandatory,ValueFromRemainingArguments=$true)][Hashtable]$Members)
+
+    if(Test-Path $UserConfig){
+        $saveConfig = (Get-Content "${UserConfig}" | ConvertFrom-JSON)
+    }else{
+        $saveConfig = @{}
+        $saveConfig.servers = @{}
+    }
+
+    Add-Member -InputObject $saveConfig.servers.$trueName -NotePropertyMembers $Members -Force
+
+    (ConvertTo-JSON $saveConfig -Depth 6 ) > $UserConfig
+    Write-Verbose ("Items `""+$Members.Keys+"`" saved to $trueName config.")
 }
 
 if( $(Test-Path $ServerConfig) -eq $false ) {
@@ -718,6 +735,7 @@ if($Update){
 }
 
 if($Server -eq "*"){
+    #when * is specified, hentapi runs the original command on all available servers and prints the results separately.
     foreach($key in $settings.keys){
         Write-Host ($key+": ")
         Invoke-Expression $MyInvocation.line.replace("*",${key})

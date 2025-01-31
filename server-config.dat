@@ -468,9 +468,20 @@
 	"Sankaku Complex":  {
                      "getCount":  "function Get-Count{
 						param([String]$tags,[switch]$pages,[int]$limit=-1)
-						$headerBlob = @{'User-Agent'='Mozilla/5.0 (PlayStation Vita 3.61) AppleWebKit/537.73 (KHTML, como Gecko) Silk/3.2';'Authorization'='Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjI3NzIxNjAsInN1Ykx2bCI6MCwiaXNzIjoiaHR0cHM6Ly9jYXBpLXYyLnNhbmtha3Vjb21wbGV4LmNvbSIsInR5cGUiOiJCZWFyZXIiLCJhdWQiOiJjb21wbGV4Iiwic2NvcGUiOiJjb21wbGV4IiwiaWF0IjoxNzI5NTcyNzk3LCJleHAiOjE3MzAxNzc1OTd9.O1R3zHTr3POLRsbdwa_bD0TO1PrmPiEo61sr4Tv2e6U'}
 						if($pages){return 100}
 						if($limit -eq 0){return 0}
+						$token = ''
+						if($ssconfig.getLogin -eq $null){
+							Write-Verbose 'Running anonymously this time because the login function is inaccessible.'
+							$ssconfig.isAnonymous = $True
+						}
+						if(-not $ssconfig.isAnonymous){
+							if(-not (test-path Function:/Get-Login)){
+								Invoke-Expression $ssconfig.getLogin
+							}
+							$token = Get-Login
+						}
+						$headerBlob = @{'User-Agent'='SCChannelApp/4.10 (RNAndroid; black)';'platform'='black-app';'Authorization'=$token}
 						if($tags -eq ' '){
 							$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=0\u0026limit=1\u0026tags=\" -Headers $headerBlob|ConvertFrom-JSON)
 							return $page.data[0].id
@@ -481,7 +492,7 @@
 							if($page.count -eq 0){
 								return 0
 							}
-							if($page[0].name_en -eq $tags){
+							if($page[0].name_en -eq ($tags -replace '_',' ')){
 								if($limit -gt 0 -and $page[0].count -gt $limit){
 									$count=$limit
 								}else{
@@ -500,7 +511,18 @@
 									$count=$limit-$page.data.count
 									break
 								}
-								$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=0\u0026limit=100\u0026tags=$tags\u0026next=$($page.meta.next)\" -Headers $headerBlob|ConvertFrom-JSON)
+								while($True){
+									try{
+										$page = (Invoke-WebRequest -UseBasicParsing -Uri \"https://capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=0\u0026limit=100\u0026tags=$tags\u0026next=$($page.meta.next)\" -Headers $headerBlob|ConvertFrom-JSON)
+										break
+									}catch{
+										if($_.exception.message -match '502'){
+											Write-Verbose 'Error 502, resending request.'
+											continue
+										}
+										throw $_
+									}
+								}
 								Write-Host \"Counted page $($count/100).\"
 								Start-Sleep -Seconds 1.5
 							}
@@ -510,7 +532,18 @@
 						}",
                      "getPost":  "function Get-Post{
 						param([int]$id,[switch]$raw)
-						$headerBlob = @{'User-Agent'='Mozilla/5.0 (PlayStation Vita 3.61) AppleWebKit/537.73 (KHTML, como Gecko) Silk/3.2';'Authorization'='Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjI3NzIxNjAsInN1Ykx2bCI6MCwiaXNzIjoiaHR0cHM6Ly9jYXBpLXYyLnNhbmtha3Vjb21wbGV4LmNvbSIsInR5cGUiOiJCZWFyZXIiLCJhdWQiOiJjb21wbGV4Iiwic2NvcGUiOiJjb21wbGV4IiwiaWF0IjoxNzI5NTcyNzk3LCJleHAiOjE3MzAxNzc1OTd9.O1R3zHTr3POLRsbdwa_bD0TO1PrmPiEo61sr4Tv2e6U'}
+						$token = ''
+						if($ssconfig.getLogin -eq $null){
+							Write-Verbose 'Running anonymously this time because the login function is inaccessible.'
+							$ssconfig.isAnonymous = $True
+						}
+						if(-not $ssconfig.isAnonymous){
+							if(-not (test-path Function:/Get-Login)){
+								Invoke-Expression $ssconfig.getLogin
+							}
+							$token = Get-Login
+						}
+						$headerBlob = @{'User-Agent'='SCChannelApp/4.10 (RNAndroid; black)';'platform'='black-app';'Authorization'=$token}
 						$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"https://capi-v2.$($ssconfig.url)/posts/keyset?tags=id_range:$id\" -Headers $headerBlob|ConvertFrom-JSON)
 						
 						if($currentPage.data.count -eq 0){
@@ -533,8 +566,19 @@
                      "getTaggedPosts":  "function Get-TaggedPosts{
 						param([String]$tags,[switch]$raw,[int]$limit=-1)
 						$postArray = @()
-						$headerBlob = @{'User-Agent'='Mozilla/5.0 (PlayStation Vita 3.61) AppleWebKit/537.73 (KHTML, como Gecko) Silk/3.2';'Authorization'='Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOjI3NzIxNjAsInN1Ykx2bCI6MCwiaXNzIjoiaHR0cHM6Ly9jYXBpLXYyLnNhbmtha3Vjb21wbGV4LmNvbSIsInR5cGUiOiJCZWFyZXIiLCJhdWQiOiJjb21wbGV4Iiwic2NvcGUiOiJjb21wbGV4IiwiaWF0IjoxNzI5NTcyNzk3LCJleHAiOjE3MzAxNzc1OTd9.O1R3zHTr3POLRsbdwa_bD0TO1PrmPiEo61sr4Tv2e6U'}
 						if($limit -lt 100 -and $limit -gt 0){$firstLimit = $limit}else{$firstLimit = 100}
+						$token = ''
+						if($ssconfig.getLogin -eq $null){
+							Write-Verbose 'Running anonymously this time because the login function is inaccessible.'
+							$ssconfig.isAnonymous = $True
+						}
+						if(-not $ssconfig.isAnonymous){
+							if(-not (test-path Function:/Get-Login)){
+								Invoke-Expression $ssconfig.getLogin
+							}
+							$token = Get-Login
+						}
+						$headerBlob = @{'User-Agent'='SCChannelApp/4.10 (RNAndroid; black)';'platform'='black-app';'Authorization'=$token}
 						$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"https://capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=0\u0026limit=$firstLimit\u0026tags=$tags\" -Headers $headerBlob|ConvertFrom-JSON)
 						if($currentPage.data.count -eq 0 -or $limit -eq 0){
 							return @()
@@ -543,26 +587,120 @@
 						$pageCounter=1
 						[dateTime]$timeOrigin = '1970-01-01 00:00:00'
 						do{
-						  forEach($post in $currentPage.data){
-							if($post.file_url -eq $null -and !$raw){
-								continue
+							forEach($post in $currentPage.data){
+								if($post.file_url -eq $null -and !$raw){
+									continue
+								}
+								$counter++
+								if($raw){
+									$postArray += $post
+								}else{
+									$creationTime = $timeOrigin.addSeconds($post.created_at.s)
+									$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=(($post.tags.name_en -replace ' ','_') -join ' ');rating=$post.rating}
+								}
+								
+								if($counter -eq $limit){return $postArray}
 							}
-							$counter++
-							if($raw){
-								$postArray += $post
-							}else{
-								$creationTime = $timeOrigin.addSeconds($post.created_at.s)
-								$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=($post.tags.name_en -join ' ');rating=$post.rating}
+							Write-Host \"Read page $pageCounter.\"
+							$pageCounter++
+							while($True){
+								try{
+									$currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"https://capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=0\u0026limit=100\u0026tags=$tags\u0026next=$($currentPage.meta.next)\" -Headers $headerBlob|ConvertFrom-JSON)
+									break
+								}catch{
+									if($_.exception.message -match '502'){
+										Write-Verbose 'Error 502, resending request.'
+										continue
+									}
+									throw $_
+								}
 							}
-							if($counter -eq $limit){return $postArray}
-						  }
-						  Write-Host \"Read page $pageCounter.\"
-						  $pageCounter++
-						  $currentPage=(Invoke-WebRequest -UseBasicParsing -Uri \"https://capi-v2.$($ssconfig.url)/posts/keyset?lang=en\u0026default_threshold=0\u0026limit=100\u0026tags=$tags\u0026next=$($currentPage.meta.next)\" -Headers $headerBlob|ConvertFrom-JSON)
-						  Start-Sleep -Seconds 1.5
+							Start-Sleep -Seconds 1.5
 						}while($currentPage.meta.prev -ne $null)
 						return $postArray
-						}"
+						}",
+					 "getLogin":  "function Get-Login{
+						#no params necessary
+						if($ssconfig.isAnonymous){
+							return ''
+						}
+						$savedLoginData = @{}
+						$promptWarnStr = \"WARNING: If you select Go Anonymous, this prompt will not show up again.`n| Pick Cancel to postpone the choice until later.\"
+						if($ssconfig.login -ne $null){
+							#if the token exists and is less than 6 days old, use it
+							if(($ssconfig.token -ne $null) -and (((Get-Date) - (Get-Date $ssconfig.lastLogin)).Days -lt 6)){
+								#everything good here, token is fresh, just use it
+								Write-Verbose 'Fresh token exists for server. Loading from file.'
+								return $ssconfig.token
+							}
+
+							Write-Host 'Old login or token missing. Re-Logging into Sankaku...'
+							$user = $ssconfig.login[0]
+							$pass = $ssconfig.login[1]
+						}else{
+							#prompt code here
+							#ask user if they want to log in, warn them that they won't see certain content unless they do.
+							Write-Host (\"| Sankaku-type server selected. Would you like to log in?`n| Sankaku has a LOT of limits on what content you can see without`n| logging in. It\u0027s still usable anonymously, but certain contentious`n| content and R18 tags will not be accessible.`n| `n| To make a fully featured Sankaku account:`n| 1. Register an account on your source URL ($($ssconfig.url))`n| 2. Wait 1 week`n| 3. Post \u0026 tag a unique image`n| 4. Remove the built-in filters/blacklists in account settings`n| `n| Then enter that account\u0027s login into hentAPI.`n| `n| Would you like to login to \"+$ssconfig.url+\"?`n|`n| \"+$promptWarnStr)
+							$loginChoice = Create-Menu -MenuTitle ' ' -MenuOptions ('Log In','Go Anonymous Forever', 'Cancel For Now') -DefaultSelection 0
+
+							if($loginChoice -eq 1){
+								$savedLoginData.isAnonymous=$True
+								SaveTo-UserConfig -Members $savedLoginData
+								return
+							}elseif($loginChoice -eq 2){
+								return
+							}
+							#user said yes
+							#get username and password, make sure to make password a secure input field.
+							$user = Read-Host -Prompt (\"`nEnter username for \"+$ssconfig.url)
+							$pass = Read-Host -Prompt ('Enter password for '+$ssconfig.url)
+						}
+
+						#login code here
+						$savedLoginData.isAnonymous = $False
+						while($True){
+							$tokenBits = $null
+							$loginString = ConvertTo-Json @{'login'=$user;'password'=$pass}
+							try{
+								$loginResult = Invoke-WebRequest -Uri 'https://sankakuapi.com/auth/token' -Method Post -Body $loginString -ContentType 'application/json' -Headers @{'User-Agent'='SCChannelApp/4.10 (RNAndroid; black)';'platform'='black-app'}
+								try{
+									$tokenBits = ConvertFrom-Json $loginResult.content
+								}catch{
+									#catch an error if it's not json
+									Write-Warning \"no parseable json returned! here's the content: `\"$($loginResult.content)`\"\"
+								}
+							}catch [System.Net.WebException]{
+								Write-Warning ('webrequest errored and returned this: '+$_)
+								$tokenBits = ConvertFrom-Json $_
+							}
+
+							if($tokenBits.success){
+								$savedLoginData.token = ($tokenBits.token_type+' '+$tokenBits.access_token)
+								$savedLoginData.login = ($user, $pass)
+								$savedLoginData.lastLogin = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+								SaveTo-UserConfig -Members $savedLoginData
+								return $savedLoginData.token
+							}
+
+							#let the user know the login failed for $tokenBits.code|error reason and prompt them to try again
+							Write-Warning ('Login failed for the following reason: '+$tokenbits)
+							
+							#prompt the user if they want to try logging in again or not
+							Write-Host (\"| Login failed.`n| TIP: Double-check your username and password.`n| `n| If you're 100% sure that your username and password are`n| correct but are still seeing this message, reach out to`n| me on GitHub to get it fixed.`n| `n| Would you like to try logging in again?`n| `n| \"+$promptWarnStr)
+							$loginChoice = Create-Menu -MenuTitle ' ' -MenuOptions ('Log In','Go Anonymous Forever','Cancel For Now') -DefaultSelection 0
+							if($loginChoice -eq 1){
+								$savedLoginData.isAnonymous = $True
+								SaveTo-UserConfig -Members $savedLoginData
+								return
+							}elseif($loginChoice -eq 2){
+								return
+							}
+
+							#prompt again for user and password
+							$user = Read-Host -Prompt (\"`nEnter username for \"+$ssconfig.url)
+							$pass = Read-Host -Prompt ('Enter password for '+$ssconfig.url)
+						}
+					}"
                  },
 	"Idol Complex":  {
                      "getCount":  "function Get-Count{
@@ -727,9 +865,9 @@
 						}
 						$tagStr = $tagStr.trimEnd(';') -replace ' ','_'
 
-						$extraInfo = ($dataList.children[1].innerText -split 'Statistics')[1]
+						$extraInfo = ($dataList.children[1].innerText -csplit 'Statistics')[1]
 						$extraInfo -match 'Posted: ([^\\r\\n]*)'\u003e$null
-						$uploadDate = [datetime]::Parse($Matches.1)
+						$uploadDate = [datetime]::Parse($Matches[1])
 						$extraInfo -match 'Size: ([^\\r\\n]*)'\u003e$null
 						$size = $Matches[1].Trim(' ') -split 'x'
 						$extraInfo -match 'Source:([^\\r\\n]*)'\u003e$null
