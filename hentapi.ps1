@@ -86,7 +86,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2025-01-31
+    Last Edit: 2026-01-02
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -123,6 +123,7 @@
     Version 3.0 - Finally added booru.org and gelbooru 0.1 support, and now I believe this program is pretty much complete. If I find some terrible bugs or get inspiration for new good features, there may be another update. (bugfix update likely)
     Version 3.01- Fixed bugs with the Paheal and Sankaku APIs. You should see far less errors now.
     Version 3.1 - ACTUALLY fixed the damn Sankaku API by implementing a login function and token saving. When the token expires, the function should automatically log in again without the user needing to do anything. How long before this breaks?
+	Version 3.11- Added auth for Gelbooru and Danbooru servers to support recent API changes. Fixed some display bugs.
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -241,7 +242,7 @@ function Add-Metadata {
         switch($oldExt){
             "png" {
                 Write-Progress -Activity "Editing file" -Id 1 -Status "Changing filetype (png -> jpg)" -PercentComplete 50 -ParentId 0
-                mogrify -format jpg $Path
+                magick mogrify -format jpg $Path
                 del $Path
                 $Path = $PathDir + $name + ".jpg"
                 $ext="jpg"
@@ -258,7 +259,7 @@ function Add-Metadata {
 
             "webp"{
                 Write-Progress -Activity "Editing file" -Id 1 -Status "Changing filetype (webp -> jpeg)" -PercentComplete 50 -ParentId 0
-                mogrify -format jpeg $Path
+                magick mogrify -format jpeg $Path
                 del $Path
                 $Path = "$PathDir$name.jpeg"
                 $ext="jpeg"
@@ -270,14 +271,15 @@ function Add-Metadata {
             return
         }
 
+        $rating=0
         if($Post.rating -match "^s" -or $Post.rating -ieq "safe"){
+            $rating=1
+        }elseif($Post.rating -match "^g" -or $Post.rating -ieq "general"){
             $rating=1
         }elseif($Post.rating -match "^q" -or $Post.rating -ieq "questionable"){
             $rating=2
         }elseif($Post.rating -match "^e" -or $Post.rating -ieq "explicit"){
             $rating=3
-        }else{
-            $rating=0
         }
 
         $time = $Post.created_at
@@ -301,16 +303,35 @@ function Add-Metadata {
         }
         
         Write-Progress -Activity "Editing file" -Status "Writing metadata (tags/author/date)" -PercentComplete 75 -Id 1 -ParentId 0
-        if($ext -eq "mp4"){
-            ffmpeg -i $Path -metadata genre="${metaTags}" -c copy "${PathDir}tmp_$name.mp4" -hide_banner -loglevel panic > $null
-            Remove-Item $Path
-            Rename-Item "${PathDir}tmp_$name.mp4" $Path
+
+        $createDateStr = $creationTime.ToString('yyyy:MM:dd HH:mm:ss')
+
+        $exifArgs = @("-Artist=`"${Server}`"", "-Rating=`"${rating}`"", "-CreateDate=`"${createDateStr}`"")
+
+        # Add source URL to Comment field if available
+        if($Post.source -ne $null -and $Post.source -ne ''){
+            $exifArgs += "-Comment=`"$($Post.source)`""
         }
-        exiftool -Artist="${Server}" -XPKeywords="${metaTags}" -Rating="${rating}" $Path -overwrite_original -q -ignoreMinorErrors
-        (get-item $Path).CreationTime = $Post.uploaded
+
+        # Handle tags based on file type
+        if($ext -eq "gif"){
+            # GIFs don't support XPKeywords, use XMP:Subject instead
+            $exifArgs += "-Subject=`"${metaTags}`""
+        }elseif($ext -eq "mp4"){
+            # For MP4, use Genre tag
+            $exifArgs += "-Genre=`"${metaTags}`""
+        }else{
+            # Standard images use XPKeywords
+            $exifArgs += "-XPKeywords=`"${metaTags}`""
+        }
+
+        $exifArgs += @($Path, "-overwrite_original", "-q", "-ignoreMinorErrors")
+        & exiftool @exifArgs
+
+        (get-item $Path).CreationTime = $creationTime
     }
     catch [System.SystemException] {
-        Write-Verbose "ExifTool/ImageMagick/FFMpeg not found. Not writing image metadata..."
+        Write-Verbose "ExifTool/ImageMagick/FFMpeg not found. Not writing image metadata...`n$_"
     }
     Write-Progress -Activity "Editing file" -Status "All operations complete." -PercentComplete 100 -ParentId 0 -Id 1 -Completed
     return $ext
@@ -318,16 +339,17 @@ function Add-Metadata {
 
 function HashCheck {
     param([string]$Path, $Post, [int]$Count=1)
-    
+
+    # Check if we should skip hash verification first, before any other processing
+    if($IgnoreHashCheck -or ($Post.md5 -ieq "SKIP")){
+        return
+    }
+
     $maxTries=3
     Write-Progress -Activity "Checking file hash.." -PercentComplete 0 -ParentId 0 -Id 1
 
     if($Count -gt $maxTries){
         Write-Warning ("Gave up on file `"${Path}`" after " + ($Count-1) + " attempts.")
-        return
-    }
-
-    if($ignoreHashCheck -or ($Post.md5 -eq "SKIP")){
         return
     }
 
@@ -548,6 +570,7 @@ function SaveTo-UserConfig {
         $saveConfig.servers = @{}
     }
 
+    Add-Member -InputObject $saveConfig.servers -NotePropertyName $trueName -NotePropertyValue $Members -ErrorAction SilentlyContinue
     Add-Member -InputObject $saveConfig.servers.$trueName -NotePropertyMembers $Members -Force
 
     (ConvertTo-JSON $saveConfig -Depth 6 ) > $UserConfig
@@ -738,7 +761,8 @@ if($Server -eq "*"){
     #when * is specified, hentapi runs the original command on all available servers and prints the results separately.
     foreach($key in $settings.keys){
         Write-Host ($key+": ")
-        Invoke-Expression $MyInvocation.line.replace("*",${key})
+		$starIdx = $MyInvocation.line.IndexOf('*')
+        Invoke-Expression $MyInvocation.line.Remove($starIdx,1).Insert($starIdx,$key)
     }
 
     exit
@@ -795,14 +819,20 @@ if( $settings.$trueName -eq $null ) {
         }
     }else{
         Write-Host "Verifying server type..."
-        Invoke-Expression (Get-Content "${ServerConfig}" | ConvertFrom-JSON).($types[$choice]).getTaggedPosts
+        $typeFunctions = (Get-Content "${ServerConfig}" | ConvertFrom-JSON).($types[$choice])
+        Invoke-Expression $typeFunctions.getTaggedPosts
+        Invoke-Expression $typeFunctions.getPost
+        $validationSucceeded = $false
+
+        if ($typeFunctions.getLogin){
+            Invoke-Expression $typeFunctions.getLogin
+            $ssconfig.getLogin = $typeFunctions.getLogin
+        }
+
         try{
-            $testPost = Get-TaggedPosts -Tags " " -Limit 1
+            $testPost = GetTaggedPosts -Tags " " -Limit 1
             if($testPost.id -ne $null){
-                $settings.$trueName.type=$types[$choice]
-            }else{
-                Write-Host "The server type didn't match the type you selected. Please try choosing another type, or using the `"Other/Automatic`" option if you don't know what to choose."
-                exit
+                $validationSucceeded = $true
             }
         } catch {
             if($_.Exception.Message.contains("404")){
@@ -812,16 +842,17 @@ if( $settings.$trueName -eq $null ) {
                 throw "oh noes! an unknown ewwow occuwwed!`n$_"
             }
         }
+
+        if($validationSucceeded){
+            $settings.$trueName.type=$types[$choice]
+        }else{
+            Write-Host "The server type didn't match the type you selected. Please try choosing another type, or using the `"Other/Automatic`" option if you don't know what to choose."
+            exit
+        }
     }
     $settings.$trueName.url = $newUrl
     
-    if(Test-Path $UserConfig){
-        $saveConfig = (Get-Content "${UserConfig}" | ConvertFrom-JSON)
-    }else{
-        $saveConfig = @{}
-    }
-    $saveConfig.servers=$settings
-    (ConvertTo-JSON $saveConfig -Depth 6 ) > $UserConfig
+    SaveTo-UserConfig -Members $settings.$trueName
     Write-Output "Server `"$server`" successfully registered."
 
     #I have to reset the settings variable, otherwise it's not in the right datatype to be put into $ssconfig.
@@ -898,7 +929,12 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
         Get-EventSubscriber -Force | Unregister-Event -Force
         Get-Job | Remove-Job -Force
 
-        $DLExt = $postData.file.split('\.')[-1] -replace '\W.+',''
+        if($postData.ext){
+            $DLExt = $postData.ext
+        }else{
+            $DLExt = $postData.file.split('\.')[-1] -replace '\W.+',''
+        }
+
         $DLFile = $DLPath + $id + "." + $DLExt
         $DLClient = New-Object System.Net.WebClient
         $DLClient.Headers['User-Agent']=$UserAgent
@@ -919,7 +955,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
             $Global:isDownloaded = $True
         }
         
-        if($hashes.IndexOf($postData.md5) -eq -1){
+        if(($postData.md5 -ieq "SKIP") -or ($hashes.IndexOf($postData.md5) -eq -1)){
             if((get-childitem ($DLPath+"*") | where Name -match "$id\.(${badExt})").count -eq 0){
             try{
             $DLClient.DownloadFileAsync($postData.file, $DLFile)
@@ -936,7 +972,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
                 if($array){break}
                 if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $postData}
-                $postData.md5>>$DLPath\hashlist
+				if(-not ($postData.md5 -eq "SKIP")){$postData.md5>>$DLPath\hashlist}
                 $metaExt = Add-Metadata -Path $DLFile -Post $postData
                 if($metaExt -ne $null){
                     $DLFile = $DLFile.Substring(0,$DLFile.Length-3) + $metaExt
@@ -1019,8 +1055,6 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
             $DLClient = New-Object System.Net.WebClient
             $DLClient.Headers['User-Agent']=$UserAgent
-            $DLExt = $postData.file.split('.')[-1] -replace '\W.+',''
-            $DLFile = $DLPath + $id + "." + $DLExt
             $Global:isDownloaded = $false
             $Global:Data = $null
             
@@ -1032,13 +1066,21 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                 $Global:isDownloaded = $True
             }
 
+            if($postData.ext){
+                $DLExt = $postData.ext
+            }else{
+                $DLExt = $postData.file.split('\.')[-1] -replace '\W.+',''
+            }
+            
+            $DLFile = $DLPath + $id + "." + $DLExt
+
             if($invalidExtensions.$DLExt -ne $null){
                 $badExt = $DLExt + "|" + $invalidExtensions.$DLExt
             } else {
                 $badExt = $DLExt
             }
 
-            if($hashes.IndexOf($postData.md5) -eq -1){
+            if(($postData.md5 -ieq "SKIP") -or ($hashes.IndexOf($postData.md5) -eq -1)){
                 if((get-childitem ($DLPath+"*") | where Name -match "$id\.(${badExt})").count -eq 0){
                     try{
                         $DLClient.DownloadFileAsync($postData.file, $DLFile)
@@ -1053,7 +1095,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
                         if($array){return}
                         if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $postData}
-                        $postData.md5>>$DLPath\hashlist
+                        if(-not ($postData.md5 -eq "SKIP")){$postData.md5>>$DLPath\hashlist}
                         $metaExt = Add-Metadata -Path $DLFile -Post $Postdata
                         if($metaExt -ne $null){
                             $DLFile = $DLPath + $id + "." + $metaExt
@@ -1132,7 +1174,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                     $id = $postData.md5
                 }
 
-                if($hashes.IndexOf($postData[$i].md5) -eq -1){
+                if(($postData[$i].md5 -ieq "SKIP") -or ($hashes.IndexOf($postData[$i].md5) -eq -1)){
                     $DLExt = $postData[$i].file.split('.')[-1] -replace '\W.+',''
                     $DLID = $id[$i]
                     $DLFile = $DLPath + $DLID + "." + $DLExt
@@ -1148,7 +1190,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                         $newName = $untagged.name.Substring(0,$untagged.Name.Length-4)
                         Rename-Item $untagged.fullname $newName
                         Add-Metadata -Path ($DLPath+$newName) -Post $postData[$i] > $null
-                        $postData[$i].md5>>($DLPath+"hashlist")
+                        if(-not ($postData[$i].md5 -ieq "SKIP")){$postData[$i].md5>>($DLPath+"hashlist")}
                         continue
                     }
 
