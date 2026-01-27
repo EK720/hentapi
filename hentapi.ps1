@@ -118,6 +118,7 @@
     Version 3.01- Fixed bugs with the Paheal and Sankaku APIs. You should see far less errors now.
     Version 3.1 - ACTUALLY fixed the damn Sankaku API by implementing a login function and token saving. When the token expires, the function should automatically log in again without the user needing to do anything. How long before this breaks?
 	Version 3.11- Added auth for Gelbooru and Danbooru servers to support recent API changes. Fixed some display bugs.
+	Version 3.2 - Fixed some logic bugs, added limit to queries, refactored download code to remove redundancy, and polished some output messages.
 #>
 [CmdletBinding(DefaultParameterSetName='TagSearch')]
 Param(
@@ -310,7 +311,15 @@ function Add-Metadata {
         # Handle tags based on file type
         if($ext -eq "gif"){
             # GIFs don't support XPKeywords, use XMP:Subject instead
-            $exifArgs += "-Subject=`"${metaTags}`""
+            # also they all have to be added separately, ugh
+            foreach($tag in $tagsList){
+                #if tag is an empty string, don't add it
+                if($tag -match '^\s*$'){
+                    continue
+                }
+
+                $exifArgs += "-Subject=`"${tag}`""
+            }
         }elseif($ext -eq "mp4"){
             # For MP4, use Genre tag
             $exifArgs += "-Genre=`"${metaTags}`""
@@ -554,6 +563,130 @@ function GetTaggedPosts{
     return $posts
 }
 
+function Invoke-SinglePostDownload {
+    param(
+        [Parameter(Mandatory)]$PostData,
+        [Parameter(Mandatory)][string]$DLPath,
+        [Parameter(Mandatory)][string]$Id,
+        [string]$UserAgent = "hentapi",
+        [hashtable]$InvalidExtensions,
+        [string]$ExistingHashes = "",
+        [switch]$IgnoreHashCheck,
+        [switch]$RecordQuery,
+        [string]$Server,
+        [string]$Tags,
+        [int]$Limit = -1,
+        [switch]$MD5
+    )
+
+    # Ensure path ends with separator
+    if($DLPath[-1] -ne "\" -and $DLPath[-1] -ne "/"){ $DLPath += "\" }
+
+    # Determine extension
+    if($PostData.ext){
+        $DLExt = $PostData.ext
+    }else{
+        $DLExt = $PostData.file.split('\.')[-1] -replace '\W.+',''
+    }
+
+    $DLFile = $DLPath + $Id + "." + $DLExt
+
+    # Calculate badExt pattern for meta/duplicate detection
+    if($InvalidExtensions.$DLExt -ne $null){
+        $badExt = $DLExt + "|" + $InvalidExtensions.$DLExt
+    } else {
+        $badExt = $DLExt
+    }
+
+    # Check for meta file recovery (supports "ID.jpgmeta" and "ID.jpg.meta")
+    $children = Get-ChildItem $DLPath
+    $metaFile = $children | Where-Object Name -match "$Id\.(${badExt})\.?meta$"
+    if($metaFile.count -eq 1){
+        $suffixLen = if($metaFile.Name -match '\.meta$'){ 5 }else{ 4 }
+        $newName = $metaFile.Name.Substring(0, $metaFile.Name.Length - $suffixLen)
+        Rename-Item $metaFile.FullName ($DLPath + $newName)
+        Add-Metadata -Path ($DLPath + $newName) -Post $PostData | Out-Null
+        if(-not ($PostData.md5 -ieq "SKIP")){ $PostData.md5 >> ($DLPath + "hashlist") }
+
+        if($RecordQuery){
+            $query = @{server=$Server; tags=$Tags; count=1; md5=$MD5.IsPresent; limit=$Limit}
+            ToBase64 (ConvertTo-JSON $query -Compress) >> ($DLPath + "queries")
+        }
+
+        return @{Success=$true; MetaRecovered=$true; File=($DLPath + $newName)}
+    }
+
+    # Check for duplicates (hash or existing file)
+    if(($PostData.md5 -ine "SKIP") -and ($ExistingHashes.IndexOf($PostData.md5) -ne -1)){
+        return @{Success=$true; Skipped=$true; Reason="HashExists"}
+    }
+
+    if((Get-ChildItem ($DLPath+"*") | Where-Object Name -match "$Id\.(${badExt})").count -gt 0){
+        if(-not ($PostData.md5 -ieq "SKIP")){ $PostData.md5 >> ($DLPath + "hashlist") }
+        return @{Success=$true; Skipped=$true; Reason="FileExists"}
+    }
+
+    # Setup WebClient and events
+    Get-EventSubscriber -Force | Unregister-Event -Force
+    Get-Job | Remove-Job -Force
+
+    $DLClient = New-Object System.Net.WebClient
+    $DLClient.Headers['User-Agent'] = $UserAgent
+    $Global:isDownloaded = $false
+    $Global:Data = $null
+
+    Register-ObjectEvent -InputObject $DLClient -EventName DownloadProgressChanged `
+        -SourceIdentifier Web.DownloadProgressChanged -SupportEvent -Action {
+        $Global:Data = $event
+    }
+
+    Register-ObjectEvent -InputObject $DLClient -EventName DownloadFileCompleted `
+        -SourceIdentifier Web.DownloadFileCompleted -SupportEvent -Action {
+        $Global:isDownloaded = $True
+    }
+
+    # Perform download with robust cleanup
+    try {
+        $DLClient.DownloadFileAsync($PostData.file, $DLFile)
+        Write-Progress -Activity "Downloading file" -Id 0 -Status "Connecting..." -PercentComplete 0
+
+        while(-not $Global:isDownloaded){
+            $progress = if($Global:Data.SourceArgs.ProgressPercentage){ $Global:Data.SourceArgs.ProgressPercentage }else{ 0 }
+            $sizeBytes = $Global:Data.SourceArgs.TotalBytesToReceive
+            $downloadedBytes = $Global:Data.SourceArgs.BytesReceived
+            Write-Progress -Activity "Downloading file" -Id 0 -Status " " -PercentComplete $progress `
+                -CurrentOperation "Downloading file $DLFile, have $downloadedBytes of $sizeBytes bytes"
+        }
+
+        # Post-download processing
+        if(-not $IgnoreHashCheck){ HashCheck -Path $DLFile -Post $PostData }
+        if(-not ($PostData.md5 -ieq "SKIP")){ $PostData.md5 >> ($DLPath + "hashlist") }
+        $metaExt = Add-Metadata -Path $DLFile -Post $PostData
+        if($metaExt -ne $null){
+            $DLFile = $DLFile -replace "\.[^\.]+$", ".$metaExt"
+        }
+
+        if($RecordQuery){
+            $query = @{server=$Server; tags=$Tags; count=1; md5=$MD5.IsPresent; limit=$Limit}
+            ToBase64 (ConvertTo-JSON $query -Compress) >> ($DLPath + "queries")
+        }
+
+        return @{Success=$true; Skipped=$false; File=$DLFile}
+    }
+    finally {
+        if(-not $Global:isDownloaded){
+            $DLClient.CancelAsync()
+            Start-Sleep -Milliseconds 300
+            if(Test-Path $DLFile){ Remove-Item $DLFile -Force -ErrorAction Continue }
+            Get-EventSubscriber -Force | Unregister-Event -Force
+            Get-Job | Remove-Job -Force
+            Write-Verbose "Ctrl-C received, partial file cleaned up"
+            exit
+        }
+        $Global:Data = $null
+    }
+}
+
 function SaveTo-UserConfig {
     param([parameter(Mandatory,ValueFromRemainingArguments=$true)][Hashtable]$Members)
 
@@ -642,8 +775,8 @@ if($Update){
             
             if($Array){$ext += " -Array"}
             if($Count){$ext += " -Count"}
-            
-            Invoke-Expression ($MyInvocation.InvocationName+" -Update `""+$out+"`""+$ext)
+
+            Invoke-Expression ($MyInvocation.InvocationName+" -Update `""+$out+"`" -ServerConfig `""+$ServerConfig+"`" -UserConfig `""+$UserConfig+"`""+$ext)
         }
         exit
     }
@@ -685,10 +818,23 @@ if($Update){
             }
             Write-Progress -Activity "Clearing progress bars" -Id 0 -Completed
             $query = ConvertFrom-Json $(FromBase64 $qArray.notDone[0])
-            $baseExpression = $MyInvocation.InvocationName+" -server " + $query.server + ' -tags "' + $query.tags + '"'
+            $baseExpression = $MyInvocation.InvocationName+" -server " + $query.server + ' -tags "' + $query.tags + '" -ServerConfig "' + $ServerConfig + '" -UserConfig "' + $UserConfig + '"'
             $currentCount = Invoke-Expression ($baseExpression + " -count")
             $isMD5 = $query.md5
             $diff = $currentCount-$query.count
+
+            # Respect original limit if set
+            if($query.limit -ne $null -and $query.limit -gt 0){
+                $maxAllowed = $query.limit - $query.count
+                if($diff -gt $maxAllowed){ $diff = $maxAllowed }
+                if($diff -le 0){
+                    Write-Host ("Limit of " + $query.limit + " already reached for query `"" + $query.tags + "`" on server `"" + $query.server + "`". Skipping...")
+                    $qArray.done += $qArray.notDone[0]
+                    $qArray.notDone = $qArray.notDone[1..($qArray.notDone.length)]
+                    continue
+                }
+            }
+
             if($isMD5){$baseExpression += " -MD5"}
             if($Count){
                 $totalDiff += $diff
@@ -846,7 +992,13 @@ if( $settings.$trueName -eq $null ) {
         }
     }
     $settings.$trueName.url = $newUrl
-    
+
+    # Copy login credentials from $ssconfig to $settings.$trueName before saving
+    $credentialKeys = @('api_key', 'user_id', 'login', 'isAnonymous', 'token', 'lastLogin')
+    foreach($key in $credentialKeys){
+        if($ssconfig.$key -ne $null){ $settings.$trueName.$key = $ssconfig.$key }
+    }
+
     SaveTo-UserConfig -Members $settings.$trueName
     Write-Output "Server `"$server`" successfully registered."
 
@@ -914,82 +1066,19 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
     $postData = Get-Post -id $Post
 
     if($Download){
-        Write-Host "Downloading post #${Post} from server `"${Server}`".."
-        $id = $Post
+        Write-Host "Downloading post #${Post} from server `"${Server}`"..."
+        $id = if($MD5){ $postData.md5 }else{ $Post }
 
-        if($MD5){
-            $id = $postData.md5
-        }
+        $result = Invoke-SinglePostDownload -PostData $postData -DLPath $DLPath -Id $id `
+            -InvalidExtensions $invalidExtensions -ExistingHashes $hashes `
+            -IgnoreHashCheck:$IgnoreHashCheck -UserAgent $UserAgent
 
-        Get-EventSubscriber -Force | Unregister-Event -Force
-        Get-Job | Remove-Job -Force
-
-        if($postData.ext){
-            $DLExt = $postData.ext
-        }else{
-            $DLExt = $postData.file.split('\.')[-1] -replace '\W.+',''
-        }
-
-        $DLFile = $DLPath + $id + "." + $DLExt
-        $DLClient = New-Object System.Net.WebClient
-        $DLClient.Headers['User-Agent']=$UserAgent
-        $Global:isDownloaded = $false
-        $Global:Data = $null
-        
-        if($invalidExtensions.$DLExt -ne $null){
-            $badExt = $DLExt + "|" + $invalidExtensions.$DLExt
-        } else {
-            $badExt = $DLExt
-        }
-
-        Register-ObjectEvent -InputObject $DLClient -EventName DownloadProgressChanged -SourceIdentifier Web.DownloadProgressChanged -SupportEvent -Action {
-            $Global:Data = $event
-        }
-
-        Register-ObjectEvent -InputObject $DLClient -EventName DownloadFileCompleted -SourceIdentifier Web.DownloadFileCompleted -SupportEvent -Action {    
-            $Global:isDownloaded = $True
-        }
-        
-        if(($postData.md5 -ieq "SKIP") -or ($hashes.IndexOf($postData.md5) -eq -1)){
-            if((get-childitem ($DLPath+"*") | where Name -match "$id\.(${badExt})").count -eq 0){
-            try{
-            $DLClient.DownloadFileAsync($postData.file, $DLFile)
-            Write-Progress -Activity "Downloading file" -Id 0 -Status "Connecting..." -PercentComplete 0
-
-
-            while(!$isDownloaded){
-                $progress = $Data.SourceArgs.ProgressPercentage
-                if($Data.SourceArgs.ProgressPercentage -eq $null){$progress = 0}
-                $sizeBytes = $Data.SourceArgs.TotalBytesToReceive
-                $downloadedBytes = $Data.SourceArgs.BytesReceived
-                Write-Progress -Activity "Downloading file" -Id 0 -Status " " -PercentComplete $progress -CurrentOperation "Downloading file $DLFile, have $downloadedBytes of $sizeBytes bytes"
-            }
-
-                if($array){break}
-                if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $postData}
-				if(-not ($postData.md5 -eq "SKIP")){$postData.md5>>$DLPath\hashlist}
-                $metaExt = Add-Metadata -Path $DLFile -Post $postData
-                if($metaExt -ne $null){
-                    $DLFile = $DLFile.Substring(0,$DLFile.Length-3) + $metaExt
-                }
-            }finally{
-                if(!$isDownloaded){
-                    $DLClient.CancelAsync()
-                    Remove-Item $DLFile
-                    Write-Verbose "Ctrl-C recieved, deleting file"
-                    exit
-                }
-                $Data = $null
-            }
-            }else{
-                $postData.md5>>$DLPath\hashlist
-            }
-        }else{
-            Write-Verbose ("Skipping download of file `""+$DLFile.split("\")[-1]+"`".")
-        }
-
-        if(Test-Path -Path $DLFile){
-            Write-Host "Post #$Post was successfully downloaded to $DLFile."
+        if($result.MetaRecovered){
+            Write-Host "Post #$Post was recovered from meta file and tagged."
+        }elseif($result.Skipped){
+            Write-Warning "Post #$Post was not downloaded - file or hash already exists."
+        }elseif($result.Success){
+            Write-Host "Post #$Post was successfully downloaded to $($result.File)."
         }else{
             throw "Something went wrong during download. Is your file path valid?"
         }
@@ -1037,97 +1126,23 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
 
     if($postCount -eq 1){
         if($Download){
-            $id = $postData.id
-
+            $id = if($MD5){ $postData.md5 }else{ $postData.id }
             Write-Host "Downloading post #${id} from server `"${Server}`"..."
 
-            if($MD5){
-                $id = $postData.md5
-            }
+            $result = Invoke-SinglePostDownload -PostData $postData -DLPath $DLPath -Id $id `
+                -InvalidExtensions $invalidExtensions -ExistingHashes $hashes `
+                -IgnoreHashCheck:$IgnoreHashCheck -UserAgent $UserAgent `
+                -RecordQuery:(-not $updateMode) -Server $Server -Tags $Tags -Limit $Limit -MD5:$MD5
 
-            Get-EventSubscriber -Force | Unregister-Event -Force
-            Get-Job | Remove-Job -Force
-
-            $DLClient = New-Object System.Net.WebClient
-            $DLClient.Headers['User-Agent']=$UserAgent
-            $Global:isDownloaded = $false
-            $Global:Data = $null
-            
-            Register-ObjectEvent -InputObject $DLClient -EventName DownloadProgressChanged -SourceIdentifier Web.DownloadProgressChanged -SupportEvent -Action {
-                $Global:Data = $event
-            }
-            
-            Register-ObjectEvent -InputObject $DLClient -EventName DownloadFileCompleted -SourceIdentifier Web.DownloadFileCompleted -SupportEvent -Action {    
-                $Global:isDownloaded = $True
-            }
-
-            if($postData.ext){
-                $DLExt = $postData.ext
-            }else{
-                $DLExt = $postData.file.split('\.')[-1] -replace '\W.+',''
-            }
-            
-            $DLFile = $DLPath + $id + "." + $DLExt
-
-            if($invalidExtensions.$DLExt -ne $null){
-                $badExt = $DLExt + "|" + $invalidExtensions.$DLExt
-            } else {
-                $badExt = $DLExt
-            }
-
-            if(($postData.md5 -ieq "SKIP") -or ($hashes.IndexOf($postData.md5) -eq -1)){
-                if((get-childitem ($DLPath+"*") | where Name -match "$id\.(${badExt})").count -eq 0){
-                    try{
-                        $DLClient.DownloadFileAsync($postData.file, $DLFile)
-                    
-                        while(!$isDownloaded){
-                            $progress = $Data.SourceArgs.ProgressPercentage
-                            if($Data.SourceArgs.ProgressPercentage -eq $null){$progress = 0}
-                            $sizeBytes = $Data.SourceArgs.TotalBytesToReceive
-                            $downloadedBytes = $Data.SourceArgs.BytesReceived
-                            Write-Progress -Activity "Downloading file" -Id 0 -Status " " -PercentComplete $progress -CurrentOperation "Downloading file $DLFile, have $downloadedBytes of $sizeBytes bytes"
-                        }
-
-                        if($array){return}
-                        if(!$IgnoreHashCheck){HashCheck -Path $DLFile -Post $postData}
-                        if(-not ($postData.md5 -eq "SKIP")){$postData.md5>>$DLPath\hashlist}
-                        $metaExt = Add-Metadata -Path $DLFile -Post $Postdata
-                        if($metaExt -ne $null){
-                            $DLFile = $DLPath + $id + "." + $metaExt
-                        }
-                    }finally{
-                        if(!$isDownloaded){
-                            $DLClient.CancelAsync()
-                            Remove-Item $DLFile
-                            Write-Verbose "Ctrl-C recieved, deleting file"
-                            exit
-                        }
-                    }
-                } else {
-                    $postData.md5>>$DLPath\hashlist
-                }
-            }else{
-                $hashDupe = $True
-            }
-
-            if((get-childitem ("$DLPath/$id.*") | where Name -match "$id\.($badExt)").count -gt 0){
+            if($result.MetaRecovered){
+                Write-Host "Post #$id was recovered from meta file and tagged."
+            }elseif($result.Skipped){
+                Write-Host "Post #$id not downloaded - it matches an already downloaded image."
+            }elseif($result.Success){
                 Write-Host "Post #$id was successfully downloaded to $DLPath."
-            }elseif($hashDupe){
-                Write-Host "Post #$id not downloaded because it matches an already downloaded image."
             }else{
                 throw "Something went wrong during download. Is your file path valid?"
             }
-
-            if(!$updateMode){
-                $query = @{}
-                $query.server = $Server
-                $query.tags = $Tags
-                $query.count = 1
-                $query.md5 = if($MD5){$true}else{$false}
-                $queryString = ConvertTo-JSON $query -Compress
-                ToBase64 $queryString >> ($DLPath + "queries")
-            }
-
             return
         }else{
             $output = $postData.file
@@ -1180,10 +1195,12 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                         $badExt = $DLExt
                     }
 
-                    if(($children | where Name -match "$DLID\.(${badExt})meta").count -eq 1 -and !$updateMode){
-                        $untagged = $children | where Name -match "$DLID\.(${badExt})meta"
-                        $newName = $untagged.name.Substring(0,$untagged.Name.Length-4)
-                        Rename-Item $untagged.fullname $newName
+                    # Check for meta file recovery (supports "ID.jpgmeta" and "ID.jpg.meta")
+                    $metaFile = $children | Where-Object Name -match "$DLID\.(${badExt})\.?meta$"
+                    if($metaFile.count -eq 1 -and !$updateMode){
+                        $suffixLen = if($metaFile.Name -match '\.meta$'){ 5 }else{ 4 }
+                        $newName = $metaFile.Name.Substring(0, $metaFile.Name.Length - $suffixLen)
+                        Rename-Item $metaFile.FullName ($DLPath + $newName)
                         Add-Metadata -Path ($DLPath+$newName) -Post $postData[$i] > $null
                         if(-not ($postData[$i].md5 -ieq "SKIP")){$postData[$i].md5>>($DLPath+"hashlist")}
                         continue
@@ -1214,8 +1231,9 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                         } finally{
                             if(!$isDownloaded){
                                 $DLClient.CancelAsync()
-                                Remove-Item $DLFile
-                                Write-Verbose "Ctrl-C recieved, cancelling download..."
+                                Start-Sleep -Milliseconds 300
+                                if(Test-Path $DLFile){ Remove-Item $DLFile -Force -ErrorAction Continue }
+                                Write-Verbose "Ctrl-C received, partial file cleaned up"
                             }
                         }
 
@@ -1273,6 +1291,7 @@ if($PSCmdlet.ParameterSetName -eq "PostSearch"){
                 $query.tags = $Tags
                 $query.count = $postCount
                 $query.md5 = if($MD5){$true}else{$false}
+                $query.limit = $Limit
                 $queryString = ConvertTo-JSON $query -Compress
                 ToBase64 $queryString >> ($DLPath + "queries")
             }

@@ -127,12 +127,12 @@
 							$currentPage = [xml][System.Net.WebUtility]::HtmlDecode($currentPage)
 						}
 						if($currentPage.posts.post -eq $null){
-							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/index.php?page=post\u0026s=view\u0026id=$id\" -UseBasicParsing)
+							$currentPage = (Invoke-WebRequest -UseBasicParsing -Uri \"$($ssconfig.url)/index.php?page=post\u0026s=view\u0026id=$id\")
 							if($currentPage.content -notmatch 'Original image'){
 							 return $null
 							}
 							$parser = New-Object -ComObject 'HTMLFile'
-							$parser.IHTMLDocument2_write($currentPage.Content)
+							$parser.write([System.Text.Encoding]::Unicode.GetBytes($currentPage.Content))
 							if($raw){
 							 return $currentPage.rawContent
 							}else{
@@ -665,7 +665,7 @@
 							return $post
 						}else{
 							[dateTime]$timeOrigin = '1970-01-01 00:00:00'
-							return @{id=$post.id;file=$post.file_url;uploaded=$timeOrigin.addSeconds($post.created_at.s);md5=$post.md5;tags=($post.tags.name_en -join ' ');rating=$post.rating;source=$post.source}
+							return @{id=$post.id;file=$post.file_url;uploaded=$timeOrigin.addSeconds($post.created_at.s);md5=$post.md5;tags=($post.tags.tagName -join ' ');rating=$post.rating;source=$post.source}
 						}
 						}",
                      "getTaggedPosts":  "function Get-TaggedPosts{
@@ -701,7 +701,7 @@
 									$postArray += $post
 								}else{
 									$creationTime = $timeOrigin.addSeconds($post.created_at.s)
-									$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=(($post.tags.name_en -replace ' ','_') -join ' ');rating=$post.rating;source=$post.source}
+									$postArray += @{id=$post.id;file=$post.file_url;uploaded=$creationTime;md5=$post.md5;tags=($post.tags.tagName -join ' ');rating=$post.rating;source=$post.source}
 								}
 								
 								if($counter -eq $limit){break}
@@ -769,7 +769,7 @@
 							$tokenBits = $null
 							$loginString = ConvertTo-Json @{'login'=$user;'password'=$pass}
 							try{
-								$loginResult = Invoke-WebRequest -Uri 'https://sankakuapi.com/auth/token' -Method Post -Body $loginString -ContentType 'application/json' -Headers @{'User-Agent'='SCChannelApp/4.10 (RNAndroid; black)';'platform'='black-app'}
+								$loginResult = Invoke-WebRequest -UseBasicParsing -Uri 'https://sankakuapi.com/auth/token' -Method Post -Body $loginString -ContentType 'application/json' -Headers @{'User-Agent'='SCChannelApp/4.10 (RNAndroid; black)';'platform'='black-app'}
 								try{
 									$tokenBits = ConvertFrom-Json $loginResult.content
 								}catch{
