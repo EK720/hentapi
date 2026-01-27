@@ -31,21 +31,15 @@
     This parameter overrides ALL other options.
 
 .PARAMETER ServerConfig
-    Here you can give a path to a custom configuration file. I don't think this one works, but I don't care.
-    Every time the program is run, it checks for a config file, and generates one if it doesn't exist.
-    Let's say (for the sake of argument), that you got a really full config file from somewhere else.
-    Perhaps you got one from the Internet because you didn't want to waste hours going through API docs. Sensible.
-
-    Move that file to the same directory as this script, and boom. It'll be loaded the next time hentapi runs.
-    Easy. Simple. Why did I add this option? Nobody's going to have that much trouble with this.
+    Optional. This parameter specifies a path to a custom server configuration file.
 
 .PARAMETER UserConfig
-    TBA
+    Optional. This parameter specifies a path to a custom user settings file.
 
 .PARAMETER Download
     This one's actually 2 parameters, but don't worry too much about that. If you want to download the results of
     your search, you would use this option with the output directory as the argument. If no argument is given, it 
-    defaults to your current directory. Have fun..
+    defaults to your current directory. Have fun...
     *Cannot be used with -Update
 
 .PARAMETER Array
@@ -86,7 +80,7 @@
 .NOTES
     Author: Fuzion
     Created: 2019-04-30
-    Last Edit: 2026-01-02
+    Last Edit: 2026-01-26
     Version 1.0 - this is a thing now
     Version 1.1 - now allows you to search by post ID and put output directly into your clipboard
     Version 1.2 - you can now use the -ListServers argument to list all servers in the config file
@@ -346,7 +340,7 @@ function HashCheck {
     }
 
     $maxTries=3
-    Write-Progress -Activity "Checking file hash.." -PercentComplete 0 -ParentId 0 -Id 1
+    Write-Progress -Activity "Checking file hash..." -PercentComplete 0 -ParentId 0 -Id 1
 
     if($Count -gt $maxTries){
         Write-Warning ("Gave up on file `"${Path}`" after " + ($Count-1) + " attempts.")
@@ -368,7 +362,7 @@ function HashCheck {
         HashCheck -Path $Path -Post $Post
         return
     }else{
-        Write-Progress -Activity "Checking file hash.." -Status "Hashing file (Attempt $Count of $maxTries)" -PercentComplete 50 -ParentId 0 -Id 1
+        Write-Progress -Activity "Checking file hash..." -Status "Hashing file (Attempt $Count of $maxTries)" -PercentComplete 50 -ParentId 0 -Id 1
         $hash = (get-fileHash $Path -algorithm MD5).hash
     }
     
@@ -376,7 +370,7 @@ function HashCheck {
         if($Count -gt 1){
             Write-Verbose ("Successfully downloaded file `"" + $Path + "`" after " + $Count + " attempts.")
         }
-        Write-Progress -Activity "Checking file hash.." -Status "Successfully verified file integrity" -PercentComplete 100 -ParentId 0 -Id 1 -Completed
+        Write-Progress -Activity "Checking file hash..." -Status "Successfully verified file integrity" -PercentComplete 100 -ParentId 0 -Id 1 -Completed
         return
     }
         
@@ -387,7 +381,7 @@ function HashCheck {
     }
     catch{
         if($_.ToString().Contains("(404) Not Found")){
-            Write-Warning ("Error 404 on post #"+$Path.split("\")[-1].Split(".")[0]+", skipping..")
+            Write-Warning ("Error 404 on post #"+$Path.split("\")[-1].Split(".")[0]+", skipping...")
             return
         } else {
             throw $_
@@ -639,7 +633,7 @@ if($Update){
     if($Recurse){
         $qFiles = Get-ChildItem $UpdatePath -name queries -Recurse
         $qFiles += Get-ChildItem $UpdatePath -name updateCheckpoint -Recurse
-        Write-Host ("Updating collections in folder `""+(get-item $UpdatePath).name+"`"..")
+        Write-Host ("Updating collections in folder `""+(get-item $UpdatePath).name+"`"...")
         forEach($qFile in $qFiles){
             $matches = ""
             $qFile -match "(.+)\\[^\\]+$" > $nul
@@ -746,7 +740,8 @@ if($Update){
         Write-Host ("Collection `""+$UpdatePath.split('\')[-2]+"`" successfully updated.")
     }catch{
         Write-Error $_
-        Write-Error "There was an error during the update process. See line 697 for more information."
+		# this line number refers to the recursive Invoke-Expression $baseExpression line.
+        Write-Error "There was an error during the update process. See line 827 for more information."
     }finally{
         if(Test-Path "update"){
             del "update"
